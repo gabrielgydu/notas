@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Notas</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2315110c'/%3E%3Ctext x='16' y='23' font-family='serif' font-style='italic' font-size='20' fill='%23e8b04b' text-anchor='middle'%3EN%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Notas">
+<meta name="theme-color" id="meta-theme" content="#f6f8fa">
+<link rel="stylesheet" href="/styles.css">
+<script>
+  // Set theme before first paint to avoid a flash.
+  (function () {
+    var saved = localStorage.getItem('notas-theme');
+    var theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.dataset.theme = theme;
+    // status-bar / browser-chrome color follows the desk background
+    document.getElementById('meta-theme').content = theme === 'dark' ? '#0d0d0e' : '#f6f8fa';
+  })();
+</script>
+</head>
+<body>
+
+<aside class="sidebar">
+  <header class="brand">
+    <a href="#/recentes" class="wordmark">Notas<span class="dot">.</span></a>
+    <span class="brand-sub">leitor de markdown</span>
+  </header>
+
+  <nav class="projects" id="projects" aria-label="Projetos"></nav>
+
+  <div class="searchbox">
+    <input id="search" type="search" placeholder="buscar no projeto&hellip;  ( / )" autocomplete="off" spellcheck="false">
+  </div>
+
+  <div class="sortbar" id="sortbar" role="group" aria-label="Ordenar arquivos">
+    <span class="sort-label">ordenar</span>
+    <button class="sort-opt" data-sort="date" title="mais antigo primeiro">&uarr; data</button>
+    <button class="sort-opt" data-sort="alpha" title="ordem alfab&eacute;tica">a&ndash;z</button>
+  </div>
+
+  <nav class="tree" id="tree" aria-label="Arquivos"></nav>
+
+  <footer class="sidebar-foot">
+    <a href="#/recentes" class="foot-link" id="recentes-link">&#9632; recentes</a>
+    <button class="foot-link theme-toggle" id="theme-toggle" title="alternar tema">&#9681; tema</button>
+  </footer>
+</aside>
+
+<div class="backdrop" id="backdrop"></div>
+
+<main class="main" id="main">
+  <div class="topbar" id="topbar">
+    <button class="menu-btn" id="menu-btn" aria-label="abrir menu" title="menu">&#9776;</button>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="topbar-actions">
+      <span class="mtime" id="mtime"></span>
+      <button class="action" id="copy-path" title="copiar caminho do arquivo" hidden>copiar caminho</button>
+    </div>
+  </div>
+
+  <div class="content-scroll" id="content-scroll">
+    <div class="page-wrap">
+      <article class="page" id="page"></article>
+      <aside class="toc" id="toc" hidden></aside>
+    </div>
+  </div>
+</main>
+
+<script src="/vendor/marked.min.js"></script>
+<script src="/vendor/highlight.min.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+[Unit]
+Description=Notas - local markdown reading server
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node %h/development/notas/server.js
+WorkingDirectory=%h/development/notas
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

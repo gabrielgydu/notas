@@ -1,0 +1,9 @@
+{
+  "name": "notas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Tiny local markdown reader — terminal sidebar, book-page rendering.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
