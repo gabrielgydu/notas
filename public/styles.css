@@ -751,8 +751,9 @@ body {
   border-radius: 999px;
 }
 
-.result-file { border-bottom: none; padding-bottom: 2px; }
-.result-file .recent-name { color: var(--accent); }
+.result-file { border-bottom: none; padding-bottom: 2px; display: flex; align-items: baseline; gap: 8px; }
+.result-file .recent-name { color: var(--accent); min-width: 0; }
+.result-file .badge { flex: none; align-self: center; }
 .result-line {
   font-family: var(--mono);
   font-size: 12px;

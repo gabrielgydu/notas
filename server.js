@@ -195,10 +195,13 @@ async function searchProject(project, query) {
   const out = [];
   let total = 0;
   for (const f of files) {
+    const nameMatch = f.rel.toLowerCase().includes(q);
     let text;
     try {
       text = await fsp.readFile(f.abs, 'utf8');
     } catch {
+      // Unreadable file still counts as a hit if its name matches.
+      if (nameMatch) out.push({ path: f.rel, nameMatch: true, matches: [] });
       continue;
     }
     const lines = text.split('\n');
@@ -210,9 +213,11 @@ async function searchProject(project, query) {
         if (total >= 400) break;
       }
     }
-    if (matches.length > 0) out.push({ path: f.rel, matches });
+    if (nameMatch || matches.length > 0) out.push({ path: f.rel, nameMatch, matches });
     if (total >= 400) break;
   }
+  // Filename hits first, then by content-match count — the most relevant on top.
+  out.sort((a, b) => (b.nameMatch - a.nameMatch) || (b.matches.length - a.matches.length));
   return { files: out, total, truncated: total >= 400 };
 }
 

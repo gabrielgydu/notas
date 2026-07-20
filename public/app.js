@@ -174,6 +174,11 @@
 
   /* ---------- views ---------- */
 
+  // File name leads so it survives truncation in a narrow tab.
+  function setTitle(text) {
+    document.title = text ? `${text} — Notas` : 'Notas';
+  }
+
   function setCrumbs(parts, leaf) {
     els.crumbs.innerHTML =
       parts.map((p) => `<span>${esc(p)}</span>`).join('<span class="sep">›</span>') +
@@ -281,6 +286,7 @@
     buildToc();
 
     setCrumbs([project, ...relPath.split('/').slice(0, -1)], relPath.split('/').pop());
+    setTitle(relPath.split('/').pop());
     els.mtime.textContent = `alterado ${humanTime(data.mtime)}`;
     els.copyPath.hidden = false;
 
@@ -301,6 +307,7 @@
     els.copyPath.hidden = true;
     els.mtime.textContent = '';
     setCrumbs(['recentes'], null);
+    setTitle('Recentes');
 
     const items = await api('/api/recent', { days: 7 });
     let html = `<h1 class="view-title">Recentes</h1>
@@ -327,13 +334,18 @@
     els.toc.hidden = true;
   }
 
+  let searchToken = 0;
   async function showSearch(q) {
     if (!state.current) return;
+    // Guard against out-of-order responses: when typing fast, an earlier
+    // (slower) request must not overwrite the results of a later one.
+    const token = ++searchToken;
     stopPolling();
     state.file = null;
     els.copyPath.hidden = true;
     els.mtime.textContent = '';
     setCrumbs([state.current, 'busca'], q);
+    setTitle(`busca: ${q}`);
 
     els.page.innerHTML = '<div class="empty">buscando…</div>';
     els.toc.hidden = true;
@@ -341,9 +353,11 @@
     try {
       data = await api('/api/search', { project: state.current, q });
     } catch (e) {
+      if (token !== searchToken) return;
       els.page.innerHTML = `<div class="empty">${esc(e.message)}</div>`;
       return;
     }
+    if (token !== searchToken) return; // superseded by a newer query
 
     let html = `<h1 class="view-title">“${esc(q)}”</h1>
       <div class="view-sub">${data.total} ocorrência${data.total === 1 ? '' : 's'} em ${data.files.length} arquivo${data.files.length === 1 ? '' : 's'} — projeto ${esc(state.current)}${data.truncated ? ' (parcial)' : ''}</div>`;
@@ -353,7 +367,9 @@
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
     for (const f of data.files) {
       const href = `#/p/${encodeURIComponent(state.current)}/${f.path.split('/').map(encodeURIComponent).join('/')}`;
-      html += `<a class="result-file" href="${href}"><div class="recent-name">${esc(f.path)}</div></a>`;
+      const name = f.nameMatch ? esc(f.path).replace(rx, (s) => `<mark>${s}</mark>`) : esc(f.path);
+      const badge = f.nameMatch ? '<span class="badge">nome</span>' : '';
+      html += `<a class="result-file" href="${href}"><div class="recent-name">${name}</div>${badge}</a>`;
       for (const m of f.matches) {
         html += `<a class="result-line" href="${href}"><span class="ln">${m.line}</span>${esc(m.text).replace(rx, (s) => `<mark>${s}</mark>`)}</a>`;
       }
@@ -578,8 +594,21 @@
     true
   );
 
+  // Live search: fire as the user types, debounced so we don't hit the server
+  // on every keystroke (searchProject reads every file in the project).
+  let searchDebounce;
+  els.search.addEventListener('input', () => {
+    clearTimeout(searchDebounce);
+    const q = els.search.value.trim();
+    // Stay silent for too-short queries and the "~" browse pseudo-project
+    // (Enter still shows an explanatory toast for the latter).
+    if (q.length < 2 || state.current === '~') return;
+    searchDebounce = setTimeout(() => showSearch(q), 200);
+  });
+
   els.search.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && els.search.value.trim().length >= 2) {
+      clearTimeout(searchDebounce);
       if (state.current === '~') {
         toast('busca disponível só em projetos');
         return;
@@ -588,6 +617,7 @@
       showSearch(els.search.value.trim());
     }
     if (e.key === 'Escape') {
+      clearTimeout(searchDebounce);
       els.search.value = '';
       els.search.blur();
     }
