@@ -12,19 +12,22 @@
 <meta name="theme-color" id="meta-theme" content="#f6f8fa">
 <link rel="stylesheet" href="/styles.css">
 <script>
-  // Set theme before first paint to avoid a flash.
+  // Set theme and sidebar state before first paint to avoid a flash.
   (function () {
     var saved = localStorage.getItem('notas-theme');
     var theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
     document.documentElement.dataset.theme = theme;
     // status-bar / browser-chrome color follows the desk background
     document.getElementById('meta-theme').content = theme === 'dark' ? '#0d0d0e' : '#f6f8fa';
+    if (localStorage.getItem('notas-sidebar') === 'collapsed') {
+      document.documentElement.classList.add('sidebar-collapsed');
+    }
   })();
 </script>
 </head>
 <body>
 
-<aside class="sidebar">
+<aside class="sidebar" id="sidebar">
   <header class="brand">
     <a href="#/recentes" class="wordmark">Notas<span class="dot">.</span></a>
     <span class="brand-sub">leitor de markdown</span>
@@ -38,8 +41,7 @@
 
   <div class="sortbar" id="sortbar" role="group" aria-label="Ordenar arquivos">
     <span class="sort-label">ordenar</span>
-    <button class="sort-opt" data-sort="date" title="mais antigo primeiro">&uarr; data</button>
-    <button class="sort-opt" data-sort="alpha" title="ordem alfab&eacute;tica">a&ndash;z</button>
+    <span class="sort-opts" id="sort-opts"></span>
   </div>
 
   <nav class="tree" id="tree" aria-label="Arquivos"></nav>
@@ -54,7 +56,7 @@
 
 <main class="main" id="main">
   <div class="topbar" id="topbar">
-    <button class="menu-btn" id="menu-btn" aria-label="abrir menu" title="menu">&#9776;</button>
+    <button class="menu-btn" id="menu-btn" aria-controls="sidebar" aria-expanded="true" aria-label="painel lateral" title="ocultar painel">&#9776;</button>
     <div class="crumbs" id="crumbs"></div>
     <div class="topbar-actions">
       <span class="mtime" id="mtime"></span>
@@ -64,6 +66,7 @@
 
   <div class="content-scroll" id="content-scroll">
     <div class="page-wrap">
+      <aside class="ann-rail" id="ann-rail" aria-label="Anota&ccedil;&otilde;es" hidden></aside>
       <article class="page" id="page"></article>
       <aside class="toc" id="toc" hidden></aside>
     </div>
@@ -72,6 +75,9 @@
 
 <script src="/vendor/marked.min.js"></script>
 <script src="/vendor/highlight.min.js"></script>
+<script src="/annotations.js"></script>
 <script src="/app.js"></script>
+<script src="/dictation.js"></script>
+<script src="/annotate.js"></script>
 </body>
 </html>

@@ -73,6 +73,13 @@
   --mark: #fff8c5;
   --shadow: 0 1px 3px rgba(31, 35, 40, 0.06);
 
+  /* annotations — a note is green, an instruction for Claude is violet
+     (the same violet as --hl-title, so the page keeps one palette) */
+  --ann-note-bg: rgba(26, 127, 55, 0.13);
+  --ann-note-line: #1a7f37;
+  --ann-claude-bg: rgba(130, 80, 223, 0.13);
+  --ann-claude-line: #8250df;
+
   --hl-comment: #57606a;
   --hl-keyword: #cf222e;
   --hl-string: #0a3069;
@@ -106,6 +113,13 @@
   --mark: #4a4a52;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 14px 44px rgba(0, 0, 0, 0.55);
 
+  /* desaturated so the two still read as different hues on graphite without
+     dragging colour into a deliberately neutral theme */
+  --ann-note-bg: rgba(96, 176, 110, 0.18);
+  --ann-note-line: #6fb47a;
+  --ann-claude-bg: rgba(158, 132, 216, 0.18);
+  --ann-claude-line: #a793d8;
+
   --hl-comment: #75757e;
   --hl-keyword: #dcdce0;
   --hl-string: #a6aea4;
@@ -127,13 +141,16 @@ html, body {
   overscroll-behavior: none;
 }
 
+:root { --sidebar-w: 300px; }
+
 body {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: var(--sidebar-w) 1fr;
   background: var(--desk);
   color: var(--ink);
   font-family: var(--serif);
-  transition: background-color 0.35s ease, color 0.35s ease;
+  transition: grid-template-columns 0.28s cubic-bezier(0.2, 0.7, 0.2, 1),
+    background-color 0.35s ease, color 0.35s ease;
 }
 
 /* ------------------------------------------------------------
@@ -236,6 +253,7 @@ body {
   color: var(--term-dim);
   margin-right: auto;
 }
+.sort-opts { display: flex; gap: 6px; }
 .sort-opt {
   background: none;
   border: 1px solid transparent;
@@ -357,17 +375,21 @@ body {
 }
 
 .menu-btn {
-  display: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: 1px solid var(--rule-strong);
   border-radius: 5px;
-  color: var(--ink-soft);
-  font-size: 15px;
+  color: var(--muted);
+  font-size: 14px;
   line-height: 1;
-  padding: 6px 10px;
+  padding: 5px 9px;
   cursor: pointer;
   flex-shrink: 0;
+  transition: all 0.15s ease;
 }
+.menu-btn:hover { color: var(--accent); border-color: var(--accent); }
 .menu-btn:active { background: var(--accent-soft); }
 
 .backdrop {
@@ -381,7 +403,9 @@ body {
 }
 /* activation lives in the <=900px media query — the drawer is mobile-only */
 
-.crumbs { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* flex:1 keeps the trail pinned next to ☰ instead of letting space-between
+   centre it between the button and the actions. */
+.crumbs { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .crumbs .sep { color: var(--rule-strong); margin: 0 6px; }
 .crumbs .leaf { color: var(--ink-soft); }
 
@@ -564,6 +588,58 @@ body {
 
 .page mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 2px; }
 
+/* ------------------------------------------------------------
+   mdt — transcluded text
+   Borrowed text has to LOOK borrowed, or the reader edits it here
+   instead of at the source. The caption is the way back.
+   ------------------------------------------------------------ */
+
+.md .mdt-embed {
+  margin: 20px 0;
+  padding: 2px 0 0 16px;
+  border-left: 3px solid var(--rule-strong);
+}
+.md .mdt-embed > :first-child { margin-top: 0; }
+.md .mdt-embed > figcaption {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  letter-spacing: 0.02em;
+}
+.md .mdt-embed > figcaption::before { content: '↳ '; opacity: 0.7; }
+.md .mdt-embed > figcaption a { color: var(--muted); }
+.md .mdt-embed > figcaption a:hover { color: var(--accent); }
+
+.md .mdt-embed.mdt-frozen { border-left-style: dashed; }
+
+/* A substituted value leaves nothing else to mark — hence the span. */
+.md .mdt-val {
+  border-bottom: 1px dotted var(--rule-strong);
+  cursor: help;
+}
+.md .mdt-val.mdt-frozen { border-bottom-style: dashed; }
+
+.md .mdt-error,
+.md .mdt-error-inline {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: #b42318;
+  background: rgba(180, 35, 24, 0.08);
+  border: 1px solid rgba(180, 35, 24, 0.35);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.md .mdt-error { display: block; margin: 16px 0; }
+.md .mdt-error-inline { padding: 0 4px; }
+
+:root[data-theme='dark'] .md .mdt-error,
+:root[data-theme='dark'] .md .mdt-error-inline {
+  color: #ff9b93;
+  background: rgba(255, 107, 96, 0.1);
+  border-color: rgba(255, 107, 96, 0.35);
+}
+
 /* frontmatter card */
 .frontmatter {
   font-family: var(--mono);
@@ -630,6 +706,22 @@ body {
 
 @media (max-width: 1180px) { .toc { display: none; } }
 
+/* Desktop — the sidebar is a column that can be closed to nothing, ☰ brings it
+   back. The grid track animates shut while the panel's children hold their open
+   width, so it gets cropped away instead of reflowing on the way out. */
+@media (min-width: 901px) {
+  .sidebar > * { min-width: calc(var(--sidebar-w) - 1px); } /* minus the border */
+
+  :root.sidebar-collapsed body { grid-template-columns: 0 1fr; }
+
+  /* Hidden only once the track has finished closing; also keeps the tree's
+     links out of the tab order while it's away. */
+  :root.sidebar-collapsed .sidebar {
+    visibility: hidden;
+    transition: visibility 0s linear 0.28s;
+  }
+}
+
 /* Mobile — sidebar becomes an off-canvas drawer, opened by the ☰ button. */
 @media (max-width: 900px) {
   body { grid-template-columns: 1fr; }
@@ -650,13 +742,13 @@ body {
     padding-top: env(safe-area-inset-top);
     padding-left: env(safe-area-inset-left);
   }
-  body.sidebar-open .sidebar {
+  :root.sidebar-open .sidebar {
     transform: none;
     visibility: visible;
     transition: transform 0.28s cubic-bezier(0.2, 0.7, 0.2, 1);
     box-shadow: 0 0 48px rgba(0, 0, 0, 0.4);
   }
-  body.sidebar-open .backdrop { opacity: 1; pointer-events: auto; }
+  :root.sidebar-open .backdrop { opacity: 1; pointer-events: auto; }
   .sidebar-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 
   /* bigger tap targets in the tree */
@@ -703,6 +795,20 @@ body {
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 2.2em;
+}
+/* when a sortbar follows, it carries the gap to the first result instead */
+.view-sub.tight { margin-bottom: 0.9em; }
+
+/* Same control as the sidebar's, but left-aligned and wearing the page palette
+   instead of the sidebar's terminal one — it sits next to .badge, not the tree. */
+.results-sort { padding: 0 0 1.8em; }
+.results-sort .sort-label { margin-right: 4px; color: var(--muted); }
+.results-sort .sort-opt { color: var(--muted); }
+.results-sort .sort-opt:hover { color: var(--accent); }
+.results-sort .sort-opt.active {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
 }
 
 .day-label {
@@ -754,6 +860,13 @@ body {
 .result-file { border-bottom: none; padding-bottom: 2px; display: flex; align-items: baseline; gap: 8px; }
 .result-file .recent-name { color: var(--accent); min-width: 0; }
 .result-file .badge { flex: none; align-self: center; }
+.result-time {
+  flex: none;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
 .result-line {
   font-family: var(--mono);
   font-size: 12px;
@@ -775,6 +888,275 @@ body {
 
 /* staggered reveal for list rows */
 .recent-row:nth-child(-n+12) { animation-delay: calc(var(--i, 0) * 28ms); }
+
+/* ------------------------------------------------------------
+   Annotations — highlights in the text, cards in the left margin
+   ------------------------------------------------------------ */
+
+/* Must beat `.page mark` (the search highlight): tint plus a hairline, no pill.
+   A quote crossing element boundaries becomes several sibling marks, so nothing
+   here may add padding or rounding that would show the seams. */
+.md mark.ann {
+  background: var(--ann-note-bg);
+  border-bottom: 1px solid var(--ann-note-line);
+  border-radius: 0;
+  padding: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.md mark.ann-claude {
+  background: var(--ann-claude-bg);
+  border-bottom-color: var(--ann-claude-line);
+}
+
+/* Highlighter palette. One class carries both tokens, and the mark, the rail
+   card and the swatch all read them — so a colour is defined once and the three
+   places that show it can never disagree. */
+.ann-c-yellow { --mk-tint: rgba(255, 222, 92, 0.5);   --mk-line: #b08800; }
+.ann-c-green  { --mk-tint: rgba(126, 231, 135, 0.45); --mk-line: #1a7f37; }
+.ann-c-blue   { --mk-tint: rgba(128, 197, 255, 0.45); --mk-line: #0969da; }
+.ann-c-pink   { --mk-tint: rgba(255, 155, 196, 0.42); --mk-line: #bf3989; }
+
+/* Weaker tints on graphite: the same alpha that reads as a highlighter on white
+   reads as a block of colour behind light text. */
+:root[data-theme='dark'] .ann-c-yellow { --mk-tint: rgba(230, 188, 62, 0.32);  --mk-line: #d8b25a; }
+:root[data-theme='dark'] .ann-c-green  { --mk-tint: rgba(96, 196, 118, 0.30);  --mk-line: #6fb47a; }
+:root[data-theme='dark'] .ann-c-blue   { --mk-tint: rgba(94, 162, 235, 0.34);  --mk-line: #78a9dd; }
+:root[data-theme='dark'] .ann-c-pink   { --mk-tint: rgba(232, 112, 170, 0.30); --mk-line: #dd8bb4; }
+
+/* A highlighter, not an underline — the tint alone carries it. Dropping the
+   hairline is also what keeps a note nested inside a highlight legible. */
+.md mark.ann-hl {
+  background: var(--mk-tint);
+  border-bottom: 0;
+}
+
+/* the passage being commented on, before it is saved */
+.md mark.ann-pending {
+  background: transparent;
+  border-bottom: 1px dashed var(--accent);
+  border-radius: 0;
+  padding: 0;
+  color: inherit;
+}
+
+.page.ann-arming,
+.page.ann-arming * { cursor: crosshair; }
+
+@keyframes ann-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  35% { box-shadow: 0 0 0 4px var(--accent-soft); }
+}
+.ann-flash { animation: ann-flash 0.9s ease; }
+
+/* The rail is a full-height column so cards can be positioned absolutely
+   against the page they annotate — hence no align-self, unlike .toc. */
+.ann-rail {
+  position: relative;
+  width: 220px;
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+@media (max-width: 1180px) { .ann-rail { display: none; } }
+
+.ann-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--rule-strong);
+  border-radius: 5px;
+  padding: 7px 10px 8px;
+  cursor: pointer;
+  transition: top 0.18s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.15s ease;
+}
+.ann-card:hover { box-shadow: var(--shadow); }
+.ann-card-note { border-left-color: var(--ann-note-line); }
+.ann-card-claude { border-left-color: var(--ann-claude-line); }
+/* Only ever a lost highlight — an anchored one has no card at all. */
+.ann-card-hl { border-left-color: var(--mk-line); }
+/* nothing to point at — say so instead of highlighting the wrong passage */
+.ann-card-lost { border-style: dashed; opacity: 0.72; cursor: default; }
+
+.ann-card-top { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.ann-card-kind {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.ann-card-note .ann-card-kind { color: var(--ann-note-line); }
+.ann-card-claude .ann-card-kind { color: var(--ann-claude-line); }
+.ann-card-hl .ann-card-kind { color: var(--mk-line); }
+.ann-card-date { color: var(--muted); font-size: 10px; margin-right: auto; }
+
+.ann-card-del {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.ann-card:hover .ann-card-del,
+.ann-card-del.ann-confirm { opacity: 1; }
+.ann-card-del:hover { color: var(--hl-keyword); border-color: var(--rule-strong); }
+.ann-card-del.ann-confirm { color: var(--hl-keyword); border-color: var(--hl-keyword); }
+
+.ann-card-status { color: var(--muted); font-style: italic; margin-bottom: 3px; }
+.ann-card-body {
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* The card is showing the passage itself, not a comment about it — three lines
+   is enough to recognise which highlight came adrift. */
+.ann-card-quote {
+  color: var(--muted);
+  font-style: italic;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------- the comment popover ---------- */
+
+.ann-popover {
+  position: fixed;
+  z-index: 35; /* over the mobile drawer (30), under the toast (40) */
+  width: min(360px, calc(100vw - 20px));
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22);
+  padding: 9px 11px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+/* The popover is one element reused for three jobs, and it swaps parts in and
+   out with the `hidden` property. An author `display:` beats the UA sheet's
+   `[hidden] { display: none }` at equal specificity, so every part that sets
+   its own display — the textarea, the swatch row — would ignore being hidden.
+   One rule here rather than a `[hidden]` variant on each of them. */
+.ann-popover [hidden] { display: none; }
+
+.ann-pop-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
+.ann-pop-kind {
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.ann-pop-kind.ann-kind-note { color: var(--ann-note-line); }
+.ann-pop-kind.ann-kind-claude { color: var(--ann-claude-line); }
+.ann-pop-kind.ann-kind-hl { color: var(--mk-line); }
+.ann-pop-status { margin-left: auto; color: var(--muted); font-size: 10.5px; }
+.ann-pop-status.ann-live { color: var(--ann-note-line); }
+.ann-pop-status.ann-live::before,
+.ann-pop-status.ann-connecting::before {
+  content: '●';
+  margin-right: 5px;
+  animation: ann-pulse 1.1s ease-in-out infinite;
+}
+@keyframes ann-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+.ann-pop-mic {
+  background: none;
+  border: 1px solid var(--rule-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+.ann-pop-mic:hover { color: var(--accent); border-color: var(--accent); }
+
+.ann-pop-text {
+  display: block;
+  width: 100%;
+  resize: vertical;
+  min-height: 62px;
+  background: var(--code-bg);
+  border: 1px solid var(--rule-strong);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  padding: 8px 9px;
+  outline: none;
+}
+.ann-pop-text:focus { border-color: var(--accent); }
+.ann-pop-text::placeholder { color: var(--muted); }
+
+.ann-pop-view {
+  max-height: 40vh;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  line-height: 1.55;
+  padding: 2px 1px;
+}
+
+/* The whole body of a highlight popover: pick a colour, or use the delete
+   button below. Swatch order is number-key order. */
+.ann-pop-colors { display: flex; gap: 8px; padding: 2px 1px; }
+.ann-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--mk-tint);
+  border: 1px solid var(--mk-line);
+  padding: 0;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.ann-swatch:hover { transform: scale(1.12); }
+/* A ring rather than a fill, so the swatch keeps showing its own colour. */
+.ann-swatch.is-on {
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--mk-line);
+  cursor: default;
+}
+
+.ann-pop-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.ann-pop-actions button {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: none;
+  border: 1px solid var(--rule-strong);
+  border-radius: 5px;
+  color: var(--muted);
+  padding: 4px 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ann-pop-actions button:hover { color: var(--accent); border-color: var(--accent); }
+.ann-pop-save { color: var(--accent); }
+.ann-pop-save:disabled { opacity: 0.5; cursor: default; }
+.ann-pop-del { margin-right: auto; }
+.ann-pop-del:hover,
+.ann-pop-del.ann-confirm { color: var(--hl-keyword); border-color: var(--hl-keyword); }
+
+@media (max-width: 900px) {
+  /* thumbs, not a mouse pointer */
+  .ann-pop-actions button { padding: 8px 14px; font-size: 12px; }
+  .ann-pop-text { font-size: 16px; } /* stops iOS zooming the viewport on focus */
+}
 
 .toast {
   position: fixed;
