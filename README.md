@@ -77,7 +77,7 @@ On phones (≤ 900 px) the sidebar becomes a drawer behind the ☰ button.
 
 ## Transclusion (mdt)
 
-If `~/development/mdt` is present, `/api/file` resolves `![[file#section]]` embeds and
+If **mdt** is installed alongside Notas, `/api/file` resolves `![[file#section]]` embeds and
 `{{@value}}` inline values before returning the content, so a note can borrow text
 from another file instead of repeating it. Notas still boots and serves files
 literally if mdt is missing or throws.
@@ -101,7 +101,7 @@ Two things follow from it:
 **Search greps raw files**, so transcluded text does not match in the embedding file.
 Correct behaviour — the source is where it lives.
 
-Full syntax, config and hard rules: `~/development/mdt/README.md`.
+Full syntax, config and hard rules live in mdt's own documentation.
 
 ## Anotações
 
@@ -207,7 +207,7 @@ files inside a declared project.
 ### Ditado (dictation)
 
 The popover records straight into the comment box via AssemblyAI
-Universal-Streaming v3 — the same protocol as `~/development/neovim-dictation`.
+Universal-Streaming v3.
 
 Two prerequisites:
 
@@ -238,3 +238,13 @@ so only do that on trusted networks).
 Only `.md`/`.markdown` files are listed. Hidden dirs, `node_modules`, `.git`,
 `.obsidian`, `.sync`, `.claude` are skipped. Path traversal outside project
 roots is blocked server-side.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
+
+Vendored third-party assets under `vendor/` keep their own licenses:
+
+- [marked](https://github.com/markedjs/marked) v9.1.6 — MIT
+- [highlight.js](https://github.com/highlightjs/highlight.js) v11.9.0 — BSD-3-Clause
+- Literata, Fraunces and IBM Plex Mono — SIL Open Font License 1.1
