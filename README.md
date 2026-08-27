@@ -26,7 +26,13 @@ systemctl --user status notas    # start/stop/restart/disable also work
 
 ## Projects
 
-Edit `projects.json` (name → folder). The server reloads it automatically, no restart needed:
+Projects are declared in `projects.json` (name → folder).
+
+That file is personal config and is not tracked — copy the example and edit it:
+
+```sh
+cp projects.example.json projects.json
+```
 
 ```json
 {
@@ -34,6 +40,10 @@ Edit `projects.json` (name → folder). The server reloads it automatically, no 
   "Reading": "~/Documents/reading"
 }
 ```
+
+The server reloads `projects.json` on change, so edits apply without a restart.
+
+Without it, Notas falls back to `projects.example.json` rather than refusing to boot.
 
 ## iPhone (PWA over Tailscale)
 

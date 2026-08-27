@@ -61,7 +61,18 @@ function expandHome(p) {
 }
 
 function loadProjects() {
-  const file = path.join(ROOT, 'projects.json');
+  // projects.json is personal config and is not tracked; a fresh clone falls
+  // back to the committed example so the server still boots.
+  let file = path.join(ROOT, 'projects.json');
+  if (!fs.existsSync(file)) {
+    const example = path.join(ROOT, 'projects.example.json');
+    if (!fs.existsSync(example)) {
+      console.warn('[notas] no projects.json — copy projects.example.json and edit it');
+      return [];
+    }
+    console.warn('[notas] no projects.json — using projects.example.json');
+    file = example;
+  }
   const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
   const projects = [];
   for (const [name, dir] of Object.entries(raw)) {
