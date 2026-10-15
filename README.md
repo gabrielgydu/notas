@@ -78,12 +78,39 @@ On phones (≤ 900 px) the sidebar becomes a drawer behind the ☰ button.
   mermaid diagrams (lazy-loaded from CDN when present).
 - ToC on wide screens with scroll-spy.
 - Autoreload: open file re-renders ~2 s after it changes on disk.
+- PDFs are listed alongside the notes and open in a new browser tab. See below.
 - Search: `/` focuses the box, Enter searches the current project (server-side grep).
 - Dark/light: follows the OS, toggle bottom-left, persisted.
 - "copiar caminho" button copies the absolute file path.
 - Anotações: select a passage, `n` for a note or `c` for a Claude instruction —
   typed or dictated, stored in the `.md` itself. `h` (or `1`–`4`) highlights it
   in one of four colours, no comment. See below.
+
+## PDFs
+
+`.pdf` files show up wherever `.md` files do — the tree, **Recentes**, search results — tagged `pdf` so you can tell before clicking.
+
+Clicking one **opens it in a new tab**, in the browser's own PDF viewer. Notas never renders it and never leaves the page you were reading.
+
+Under the hood every one of those rows is a plain `target="_blank"` link to `/api/raw`, so the click itself opens the tab and the router is never involved.
+
+`/api/raw` answers `Range` requests. Chrome's viewer reads the trailer first and then only the pages on screen, so a 300 MB scan starts drawing immediately instead of downloading whole — which is the difference between usable and not over the tailnet.
+
+A typed or bookmarked `#/p/…/file.pdf` URL (the `notas-open` skill produces these) lands on a small card that offers the tab, and tries to open it for you. Popup blockers make the attempt unreliable, never the link.
+
+### Search matches the filename, not the contents
+
+Nothing is ever read out of a PDF. `Downloads` alone holds ~700 of them at ~3 GB, and search fires live on every keystroke — extracting text on that path is not a trade worth making.
+
+So a PDF is only ever a **name hit**, it never contributes to the occurrence count, and the search header says how many of the results were PDFs.
+
+The two kinds get separate budgets, because they cost nothing alike: 400 markdown *occurrences* (one file read each) and 100 PDF filename hits (one string compare each). Spending the markdown budget stops the reading, not the walk — otherwise a handful of chatty notes would swallow the counter and every PDF the walk had not reached yet would vanish silently. Either cap being hit shows as `(parcial)`.
+
+Within the filename tier notes sort above PDFs. A folder like `~/Downloads` would otherwise bury every note under its own filenames.
+
+Everything else stays markdown-only on purpose: `/api/file` refuses a PDF with a 415 rather than reading 300 MB as utf-8, annotations already refuse anything that is not `.md`, and `[[wikilinks]]` prefer a markdown file over a same-named PDF.
+
+The service worker will not cache a PDF either — one of them would blow the origin's storage quota and evict every note in it.
 
 ## Transclusion (mdt)
 
@@ -183,6 +210,12 @@ Rewrite this section to be more concise, keep the numbers.
 The section renders as ordinary markdown at the foot of the page — that is
 deliberate, the annotations are part of the note now.
 
+It renders **folded shut**, though: it is storage, and the same annotations are already on the page as marks and cards.
+
+Its own heading is the lever — click it, or Enter/Space it, and the count beside it says how many entries are folded away.
+
+It stays open while the file re-renders under it (a save, the 2 s autoreload), and folds again for the next file.
+
 A highlight is the quote and nothing else: no blank line, no body. Yellow is never written out, so a bare `ann:hl` marker *is* a yellow highlight.
 
 The quote is what re-finds the passage on every render: nothing stores a position,
@@ -207,12 +240,21 @@ Below that, clicking a `nota`/`claude` mark opens a popover with the comment and
 
 Clicking a `marca` always opens its own popover, rail or no rail.
 
-Writes are **desktop-only, on purpose**: `/api/annotate`, `/api/annotate/delete`,
-`/api/annotate/color` and `/api/aai-token` all refuse any request carrying
-`X-Forwarded-For`, which
-`tailscale serve` sets and a direct localhost request never does. The tailnet PWA
-stays a reader. The `~` browse pseudo-project is refused too — annotations are for
-files inside a declared project.
+Writes need a trusted caller: `/api/annotate`, `/api/annotate/delete`, `/api/annotate/color`, `/api/create` and `/api/aai-token` accept a direct localhost request, or a tailnet request whose Tailscale login is listed in `NOTAS_WRITERS`.
+
+`tailscale serve` sets `X-Forwarded-For` on everything it proxies, which a direct localhost request never carries.
+
+For tailnet users it also sets `Tailscale-User-Login`, after deleting any copy the client sent, so the login can't be forged through the proxy; tagged nodes and Funnel traffic get no login at all.
+
+With `NOTAS_WRITERS` unset, the tailnet PWA stays a reader.
+
+The `~` browse pseudo-project is refused too — annotations are for files inside a declared project.
+
+Every write (`/api/annotate*`, `/api/create`) must also arrive as `application/json`, or it is refused with 415.
+
+That is the guard against other websites: any page you visit can POST `text/plain` to `127.0.0.1` without asking, and before this it could append annotations to your notes.
+
+A JSON POST from another origin needs a CORS preflight first, which Notas never answers, so the browser never sends it. The client's `apiPost` always sets the header.
 
 ### Ditado (dictation)
 
@@ -239,13 +281,33 @@ Typing while the mic is live pauses it and folds the transcript into what you ha
 — the mic button re-arms with a fresh session that appends. Saving mid-sentence
 waits up to 800 ms for the final formatted revision, then writes.
 
+## Creating files (`/api/create`)
+
+`POST /api/create` with `{ project, path, content }` writes a new markdown file and **never touches one that already exists**.
+
+Answers `201 { created: true, path }` for a new file, `200 { created: false, path }` when something is already there. The existing file is left byte-for-byte alone.
+
+It is meant for clients that derive the path from the content: saving the same thing twice just tells you where the first copy is, and annotations already written into it survive.
+
+"Already exists" is decided by `link(2)`, not by a stat that could race: the text goes to a tmp file and is linked into place, which fails atomically with `EEXIST`.
+
+A reader never sees a half-written file either.
+
+The folder must already exist inside the project (symlinks resolved, same rule as annotations). Hidden paths, non-markdown files and the `~` pseudo-project are refused.
+
+Like every write it is localhost-only and JSON-only (see *Where it works* above). A browser extension with host permission can send JSON without the preflight a web page would need.
+
+Its one client today is the hablarcondios extension (`~/development/hablarcondios/extension`).
+
 ## Config
 
-Env vars: `NOTAS_PORT` (default 7777), `NOTAS_HOST` (default 127.0.0.1 — set
-`0.0.0.0` to reach it from the phone on the same network; there is no auth,
-so only do that on trusted networks).
+Env vars:
 
-Only `.md`/`.markdown` files are listed. Hidden dirs, `node_modules`, `.git`,
+- `NOTAS_PORTS` (default `80,7777`; `NOTAS_PORT` is still read as a one-port alias).
+- `NOTAS_HOST` (default 127.0.0.1 — set `0.0.0.0` to reach it from the phone on the same network; there is no auth, so only do that on trusted networks).
+- `NOTAS_WRITERS` (comma-separated Tailscale logins allowed to write through `tailscale serve`; default none — see the write rules above).
+
+Only `.md`/`.markdown` and `.pdf` files are listed. Hidden dirs, `node_modules`, `.git`,
 `.obsidian`, `.sync`, `.claude` are skipped. Path traversal outside project
 roots is blocked server-side.
 

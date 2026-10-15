@@ -34,6 +34,18 @@ const HOST = process.env.NOTAS_HOST || '127.0.0.1';
 
 const IGNORED_DIRS = new Set(['node_modules', '.git', '.obsidian', '.sync', '.claude']);
 const MD_EXTS = new Set(['.md', '.markdown']);
+// PDFs are listed and served, never parsed: Notas hands them to the browser's
+// own viewer in a new tab. They match by *filename only* — reading text out of
+// 3 GB of scans on every keystroke of a live search is not a trade worth making.
+const PDF_EXTS = new Set(['.pdf']);
+
+// The single answer to "does Notas show this file, and as what?".
+function fileKind(name) {
+  const ext = path.extname(name).toLowerCase();
+  if (MD_EXTS.has(ext)) return 'md';
+  if (PDF_EXTS.has(ext)) return 'pdf';
+  return null;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -106,9 +118,10 @@ function getProject(name) {
   return PROJECTS.find((p) => p.name === name) || null;
 }
 
-// One directory level: dirs first, then markdown files. Each node carries its
+// One directory level: dirs first, then readable files. Each node carries its
 // own mtime (ms) so the client can offer date sorting; dir mtime reflects when
 // its listing last changed (add/remove/rename), not edits to files within.
+// `kind` tells the client whether a row routes into the reader or opens a tab.
 async function listDir(dir, rel) {
   let entries;
   try {
@@ -122,10 +135,15 @@ async function listDir(dir, rel) {
     if (e.name.startsWith('.') || IGNORED_DIRS.has(e.name)) continue;
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     const isDir = e.isDirectory();
-    if (!isDir && !(e.isFile() && MD_EXTS.has(path.extname(e.name).toLowerCase()))) continue;
+    const kind = isDir ? null : fileKind(e.name);
+    if (!isDir && !(e.isFile() && kind)) continue;
     let mtime = 0;
     try { mtime = (await fsp.stat(path.join(dir, e.name))).mtimeMs; } catch { /* ignore */ }
-    (isDir ? dirs : files).push({ type: isDir ? 'dir' : 'file', name: e.name, path: childRel, mtime });
+    (isDir ? dirs : files).push(
+      isDir
+        ? { type: 'dir', name: e.name, path: childRel, mtime }
+        : { type: 'file', kind, name: e.name, path: childRel, mtime }
+    );
   }
   const byName = (a, b) => a.name.localeCompare(b.name, 'pt', { numeric: true });
   dirs.sort(byName);
@@ -159,8 +177,8 @@ async function buildTree(dir, rel = '') {
     if (e.isDirectory()) {
       const children = await buildTree(abs, childRel);
       if (children.length > 0) dirs.push({ type: 'dir', name: e.name, path: childRel, mtime, children });
-    } else if (e.isFile() && MD_EXTS.has(path.extname(e.name).toLowerCase())) {
-      files.push({ type: 'file', name: e.name, path: childRel, mtime });
+    } else if (e.isFile() && fileKind(e.name)) {
+      files.push({ type: 'file', kind: fileKind(e.name), name: e.name, path: childRel, mtime });
     }
   }
   const byName = (a, b) => a.name.localeCompare(b.name, 'pt', { numeric: true });
@@ -181,8 +199,11 @@ async function walkFiles(dir, rel, out) {
     const childRel = rel ? `${rel}/${e.name}` : e.name;
     if (e.isDirectory()) {
       await walkFiles(path.join(dir, e.name), childRel, out);
-    } else if (e.isFile() && MD_EXTS.has(path.extname(e.name).toLowerCase())) {
-      out.push({ abs: path.join(dir, e.name), rel: childRel });
+    } else if (e.isFile()) {
+      // Both kinds ride in one walk; every caller filters on `kind` itself,
+      // because "recent" and "search" want different things from a PDF.
+      const kind = fileKind(e.name);
+      if (kind) out.push({ abs: path.join(dir, e.name), rel: childRel, kind });
     }
   }
 }
@@ -205,7 +226,7 @@ async function recentFiles(days) {
       if (st.mtimeMs < cutoff) continue;
       const prev = byAbs.get(f.abs);
       if (!prev || p.root.length > prev.rootLen) {
-        byAbs.set(f.abs, { project: p.name, path: f.rel, mtime: st.mtimeMs, rootLen: p.root.length });
+        byAbs.set(f.abs, { project: p.name, path: f.rel, kind: f.kind, mtime: st.mtimeMs, rootLen: p.root.length });
       }
     }
   }
@@ -214,20 +235,43 @@ async function recentFiles(days) {
   return result.slice(0, 150);
 }
 
+/* Two independent budgets, because the two kinds cost nothing alike.
+ * MATCH_LIMIT counts markdown *occurrences* — the expensive thing, one whole
+ * file read each. PDF_LIMIT counts filename hits, which cost a string compare;
+ * they need a cap of their own only because a two-letter query matches 240 of
+ * the 727 PDFs in ~/Downloads, and nobody reads 240 rows. */
+const MATCH_LIMIT = 400;
+const PDF_LIMIT = 100;
+
 async function searchProject(project, query) {
   const files = [];
   await walkFiles(project.root, '', files);
   const q = query.toLowerCase();
   const out = [];
   let total = 0;
+  let pdfHits = 0;
+  let mdCapped = false;
   for (const f of files) {
     const nameMatch = f.rel.toLowerCase().includes(q);
+    // A PDF is its filename here and nothing more — no text is ever read out of
+    // one, so it can only ever be a name hit and never contributes to `total`.
+    if (f.kind === 'pdf') {
+      if (nameMatch && pdfHits++ < PDF_LIMIT) {
+        out.push({ path: f.rel, kind: 'pdf', nameMatch: true, matches: [], mtime: await statMtime(f.abs) });
+      }
+      continue;
+    }
+    // Spending the *content* budget must not stop us finding PDFs: it is the
+    // markdown reads that have to stop, not the walk. Breaking out here instead
+    // would drop every PDF the walk had not reached yet — hundreds of them in a
+    // project whose handful of notes exhausts the counter on their own.
+    if (mdCapped) continue;
     let text;
     try {
       text = await fsp.readFile(f.abs, 'utf8');
     } catch {
       // Unreadable file still counts as a hit if its name matches.
-      if (nameMatch) out.push({ path: f.rel, nameMatch: true, matches: [], mtime: await statMtime(f.abs) });
+      if (nameMatch) out.push({ path: f.rel, kind: 'md', nameMatch: true, matches: [], mtime: await statMtime(f.abs) });
       continue;
     }
     const lines = text.split('\n');
@@ -236,18 +280,23 @@ async function searchProject(project, query) {
       if (lines[i].toLowerCase().includes(q)) {
         total++;
         if (matches.length < 8) matches.push({ line: i + 1, text: lines[i].trim().slice(0, 300) });
-        if (total >= 400) break;
+        if (total >= MATCH_LIMIT) break;
       }
     }
     // mtime rides along so the client can offer date sorting without a second round-trip.
     if (nameMatch || matches.length > 0) {
-      out.push({ path: f.rel, nameMatch, matches, mtime: await statMtime(f.abs) });
+      out.push({ path: f.rel, kind: 'md', nameMatch, matches, mtime: await statMtime(f.abs) });
     }
-    if (total >= 400) break;
+    if (total >= MATCH_LIMIT) mdCapped = true;
   }
   // Filename hits first, then by content-match count — the most relevant on top.
-  out.sort((a, b) => (b.nameMatch - a.nameMatch) || (b.matches.length - a.matches.length));
-  return { files: out, total, truncated: total >= 400 };
+  // Within the name tier notes come before PDFs: this is a markdown reader, and
+  // a PDF-heavy folder would otherwise bury every note under its filenames.
+  out.sort((a, b) =>
+    (b.nameMatch - a.nameMatch) ||
+    ((a.kind === 'pdf') - (b.kind === 'pdf')) ||
+    (b.matches.length - a.matches.length));
+  return { files: out, total, truncated: mdCapped || pdfHits > PDF_LIMIT };
 }
 
 async function statMtime(abs) {
@@ -294,16 +343,18 @@ async function resolveWikilink(project, name) {
   const files = [];
   await walkFiles(project.root, '', files);
   const want = name.toLowerCase();
-  for (const f of files) {
-    const base = path.basename(f.rel, path.extname(f.rel)).toLowerCase();
-    if (base === want) return f.rel;
+  // Markdown before PDF: `[[relatório]]` written inside a note means the note,
+  // even when a relatório.pdf sits in the same folder.
+  const order = [...files.filter((f) => f.kind === 'md'), ...files.filter((f) => f.kind !== 'md')];
+  const base = (f) => path.basename(f.rel, path.extname(f.rel)).toLowerCase();
+  for (const f of order) {
+    if (base(f) === want) return { path: f.rel, kind: f.kind };
   }
   // Fall back to a loose match (name contained in the basename).
-  for (const f of files) {
-    const base = path.basename(f.rel, path.extname(f.rel)).toLowerCase();
-    if (base.includes(want)) return f.rel;
+  for (const f of order) {
+    if (base(f).includes(want)) return { path: f.rel, kind: f.kind };
   }
-  return null;
+  return { path: null, kind: null };
 }
 
 function sendJSON(res, status, data) {
@@ -314,12 +365,28 @@ function sendJSON(res, status, data) {
 
 /* ---------- writes (annotations) ----------
  *
- * Everything below is deliberately desktop-only. `tailscale serve` sets
+ * A write needs a trusted caller: a direct localhost request, or a tailnet
+ * request from a login listed in NOTAS_WRITERS. `tailscale serve` sets
  * X-Forwarded-For on everything it proxies and a direct localhost request never
- * carries one, so that header is the whole gate: the tailnet PWA stays a reader.
- * Relaxing this later is deleting one call. */
+ * carries one. For a tailnet user it also sets Tailscale-User-Login — after
+ * deleting any copy the client sent, so it can't be forged through the proxy —
+ * and sets none for tagged nodes or Funnel traffic. With NOTAS_WRITERS unset the
+ * tailnet PWA stays a reader. */
+
+const WRITERS = new Set(
+  (process.env.NOTAS_WRITERS || '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+);
 
 const isProxied = (req) => Boolean(req.headers['x-forwarded-for']);
+const canWrite = (req) =>
+  !isProxied(req) || WRITERS.has(String(req.headers['tailscale-user-login'] || '').toLowerCase());
+
+/* Every write must arrive as application/json. Any web page can POST text/plain
+ * to 127.0.0.1 without asking (a CORS "simple request" — the answer is opaque
+ * to it, but the write has already happened). A JSON POST from another origin
+ * needs a preflight first, which this server never answers, so the browser
+ * never sends it. The client's apiPost always sets the header. */
+const isJSON = (req) => /^application\/json\b/i.test(req.headers['content-type'] || '');
 
 function readBody(req, res, limit = 1024 * 1024) {
   return new Promise((resolve, reject) => {
@@ -543,6 +610,70 @@ async function handleAnnotateColor(req, res) {
   });
 }
 
+/* ---------- create ----------
+ *
+ * Writes a new markdown file and never touches one that already exists. For
+ * clients that derive the path from the content (the hablarcondios extension):
+ * saving the same page twice is a no-op that answers with where the first copy
+ * is, so annotations already written into it survive.
+ *
+ * "Already exists" is decided by link(2), not by a stat that could race: the
+ * text goes to a tmp file first and is linked into place, which fails with
+ * EEXIST atomically — and a reader never sees a half-written file either.
+ *
+ * Like every write it only accepts application/json (see isJSON), which a
+ * browser extension with host permission can send without a preflight. */
+
+async function handleCreate(req, res) {
+  let body;
+  try {
+    body = await readJSON(req, res);
+  } catch (e) {
+    return sendJSON(res, e.status || 400, { error: e.message });
+  }
+  const project = getProject(body && body.project);
+  if (!project) return sendJSON(res, 404, { error: 'unknown project' });
+  if (project.browse) return sendJSON(res, 403, { error: 'criação indisponível em ~' });
+  const abs = safeJoin(project.root, typeof body.path === 'string' ? body.path : '');
+  if (!abs || abs === project.root) return sendJSON(res, 400, { error: 'bad path' });
+  if (!MD_EXTS.has(path.extname(abs).toLowerCase())) return sendJSON(res, 400, { error: 'not a markdown file' });
+  const rel = path.relative(project.root, abs).split(path.sep).join('/');
+  // Written but never listed is worse than refused.
+  if (rel.split('/').some((seg) => seg.startsWith('.') || IGNORED_DIRS.has(seg))) {
+    return sendJSON(res, 400, { error: 'caminho oculto' });
+  }
+  const content = textField(body.content, 1024 * 1024);
+  if (!content) return sendJSON(res, 400, { error: 'conteúdo vazio' });
+
+  // The folder must exist already, and really be inside the project — the
+  // same symlink rule as resolveWritable.
+  let dir;
+  try {
+    dir = await fsp.realpath(path.dirname(abs));
+  } catch {
+    return sendJSON(res, 404, { error: 'pasta não existe' });
+  }
+  const root = await fsp.realpath(project.root).catch(() => project.root);
+  if (dir !== root && !dir.startsWith(root + path.sep)) {
+    return sendJSON(res, 403, { error: 'link aponta para fora do projeto' });
+  }
+  const target = path.join(dir, path.basename(abs));
+
+  return withFileLock(target, async () => {
+    const tmp = `${target}.notas-${process.pid}-${tmpSeq++}.tmp`;
+    try {
+      await fsp.writeFile(tmp, content + '\n', { encoding: 'utf8', flag: 'wx' });
+      await fsp.link(tmp, target);
+    } catch (e) {
+      if (e.code === 'EEXIST') return sendJSON(res, 200, { created: false, path: rel });
+      throw e;
+    } finally {
+      await fsp.unlink(tmp).catch(() => {});
+    }
+    return sendJSON(res, 201, { created: true, path: rel });
+  });
+}
+
 /* ---------- dictation token ----------
  *
  * The AssemblyAI API key never leaves this process; the browser gets a token
@@ -592,21 +723,103 @@ async function handleAaiToken(res) {
   return sendJSON(res, 200, { token: data.token, keyterms });
 }
 
-function sendFile(res, abs) {
-  const mime = MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream';
-  const stream = fs.createReadStream(abs);
+/* Single-range only. That is all a PDF viewer or an <img> ever asks for, and a
+ * multipart/byteranges reply is not worth writing for a local reader.
+ * undefined = send the whole file, null = 416, else {start, end} inclusive. */
+function parseRange(header, size) {
+  if (!header) return undefined;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m) return undefined; // malformed — ignore it and send everything
+  const [, from, to] = m;
+  if (from === '' && to === '') return undefined;
+  let start;
+  let end;
+  if (from === '') {
+    const n = Number(to); // suffix form: the last n bytes
+    if (n === 0) return null;
+    start = Math.max(0, size - n);
+    end = size - 1;
+  } else {
+    start = Number(from);
+    end = to === '' ? size - 1 : Math.min(Number(to), size - 1);
+  }
+  if (start >= size || start > end) return null;
+  return { start, end };
+}
+
+/* /api/raw carries the name in a query string, so without this every "save as"
+ * would suggest "raw". RFC 5987 is the only form that survives both quotes and
+ * the accents half of these filenames have. `inline` never forces a download —
+ * it only says "render me if you can", which is exactly what a PDF wants. */
+function contentDisposition(name) {
+  const ascii = name.replace(/[^\x20-\x7e]/g, '_').replace(/["\\]/g, '_');
+  // encodeURIComponent leaves `!'()*~` alone, but RFC 8187's attr-char excludes
+  // `'()*` — and `'` is the ext-value's own delimiter, so one apostrophe in the
+  // name makes a strict parser drop the whole parameter and fall back to the
+  // ASCII form, which has already lost every accent.
+  const ext = encodeURIComponent(name).replace(/['()*]/g, (c) =>
+    `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  return `inline; filename="${ascii}"; filename*=UTF-8''${ext}`;
+}
+
+async function sendFile(req, res, abs) {
+  let st;
+  try {
+    st = await fsp.stat(abs);
+  } catch {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('not found');
+  }
+  if (!st.isFile()) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    return res.end('not found');
+  }
+
+  const head = {
+    'Content-Type': MIME[path.extname(abs).toLowerCase()] || 'application/octet-stream',
+    'Content-Disposition': contentDisposition(path.basename(abs)),
+    // Chrome's PDF viewer reads the trailer first (the xref table lives at the
+    // end) and then only the pages on screen. Without ranges it has to pull the
+    // whole file before drawing page 1 — minutes for a 300 MB scan over the tailnet.
+    'Accept-Ranges': 'bytes',
+  };
+
+  const range = parseRange(req.headers.range, st.size);
+  if (range === null) {
+    res.writeHead(416, { 'Content-Range': `bytes */${st.size}`, 'Accept-Ranges': 'bytes' });
+    return res.end();
+  }
+
+  const stream = fs.createReadStream(abs, range ? { start: range.start, end: range.end } : {});
   // Headers only after the stream opens — writing 200 first meant an ENOENT
   // (missing asset, broken image link via /api/raw) threw ERR_HTTP_HEADERS_SENT
-  // in the error handler and killed the whole process.
+  // in the error handler and killed the whole process. The stat above narrows
+  // the window but does not close it.
   stream.on('error', () => {
     if (res.headersSent) return res.destroy();
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('not found');
   });
   stream.once('open', () => {
-    res.writeHead(200, { 'Content-Type': mime });
+    if (range) {
+      res.writeHead(206, {
+        ...head,
+        'Content-Range': `bytes ${range.start}-${range.end}/${st.size}`,
+        'Content-Length': range.end - range.start + 1,
+      });
+    } else {
+      res.writeHead(200, { ...head, 'Content-Length': st.size });
+    }
     stream.pipe(res);
   });
+  // Closing the tab on a half-read 300 MB file must not leave the fd open.
+  res.on('close', () => stream.destroy());
+  // …and if the client left *while the stat above was pending*, 'close' already
+  // fired and that listener will never run. The stream is open by now, piping
+  // into a dead response, with nothing left to close it — one leaked fd per
+  // abort, forever. Chrome cancels range requests constantly while you scroll a
+  // big scan, so this window gets hit for real.
+  if (res.destroyed) stream.destroy();
 }
 
 const handler = async (req, res) => {
@@ -640,7 +853,13 @@ const handler = async (req, res) => {
       const abs = safeJoin(project.root, url.searchParams.get('path') || '');
       if (!abs) return sendJSON(res, 400, { error: 'bad path' });
 
-      if (p === '/api/raw') return sendFile(res, abs);
+      if (p === '/api/raw') return await sendFile(req, res, abs);
+
+      // Only markdown goes through the reader. A PDF handed to /api/file would
+      // be read whole as utf8 — 300 MB of mojibake, and mdt asked to expand it.
+      if (p === '/api/file' && fileKind(abs) !== 'md') {
+        return sendJSON(res, 415, { error: 'não é markdown', kind: fileKind(abs) });
+      }
 
       let st;
       try {
@@ -682,20 +901,21 @@ const handler = async (req, res) => {
     if (p === '/api/resolve') {
       const project = getProject(url.searchParams.get('project'));
       if (!project) return sendJSON(res, 404, { error: 'unknown project' });
-      if (project.browse) return sendJSON(res, 200, { path: null });
+      if (project.browse) return sendJSON(res, 200, { path: null, kind: null });
       const name = (url.searchParams.get('name') || '').trim();
       if (!name) return sendJSON(res, 400, { error: 'missing name' });
-      return sendJSON(res, 200, { path: await resolveWikilink(project, name) });
+      return sendJSON(res, 200, await resolveWikilink(project, name));
     }
 
     if (
       p === '/api/annotate' ||
       p === '/api/annotate/delete' ||
       p === '/api/annotate/color' ||
+      p === '/api/create' ||
       p === '/api/aai-token'
     ) {
-      // Writes and token minting are localhost-only, see isProxied().
-      if (isProxied(req)) return sendJSON(res, 403, { error: 'só no desktop' });
+      // Writes and token minting need a trusted caller, see canWrite().
+      if (!canWrite(req)) return sendJSON(res, 403, { error: 'sem permissão de escrita pela tailnet (NOTAS_WRITERS)' });
       // `return await`, not `return`: a bare `return promise` settles *after* this
       // try block has exited, so a disk error would escape as an unhandled
       // rejection — which Node turns into a process exit, killing the server.
@@ -704,8 +924,10 @@ const handler = async (req, res) => {
         return await handleAaiToken(res);
       }
       if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method not allowed' });
+      if (!isJSON(req)) return sendJSON(res, 415, { error: 'use application/json' });
       if (p === '/api/annotate') return await handleAnnotate(req, res);
       if (p === '/api/annotate/color') return await handleAnnotateColor(req, res);
+      if (p === '/api/create') return await handleCreate(req, res);
       return await handleAnnotateDelete(req, res);
     }
 
@@ -722,7 +944,7 @@ const handler = async (req, res) => {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
       return res.end('bad request');
     }
-    return sendFile(res, abs);
+    return await sendFile(req, res, abs);
   } catch (err) {
     console.error('[notas]', err);
     return sendJSON(res, 500, { error: 'internal error' });

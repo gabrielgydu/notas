@@ -4,7 +4,7 @@
    Everything is network-first: on the tailnet the server is the source of
    truth, the cache only steps in when it's unreachable. */
 
-const VERSION = 'v11';
+const VERSION = 'v12';
 const SHELL_CACHE = `notas-shell-${VERSION}`;
 const DATA_CACHE = `notas-data-${VERSION}`;
 
@@ -46,11 +46,22 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+/* Everything readable is worth keeping offline; a PDF is not. One 300 MB scan
+ * would eat the whole origin quota and evict every note in it — and the viewer
+ * asks for it in Range slices anyway, which cache.put rejects outright (206). */
+const MAX_CACHE_BYTES = 4 * 1024 * 1024;
+
+function cacheable(res) {
+  if (res.status !== 200) return false; // 206 in particular: cache.put throws on it
+  if ((res.headers.get('Content-Type') || '').startsWith('application/pdf')) return false;
+  return Number(res.headers.get('Content-Length') || 0) <= MAX_CACHE_BYTES;
+}
+
 async function networkFirst(req, cacheName) {
   const cache = await caches.open(cacheName);
   try {
     const res = await fetch(req);
-    if (res.ok) cache.put(req, res.clone());
+    if (cacheable(res)) cache.put(req, res.clone());
     return res;
   } catch (err) {
     const hit = await cache.match(req);

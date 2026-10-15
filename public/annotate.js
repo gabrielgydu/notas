@@ -45,6 +45,11 @@
     entries: [],
     cards: [],
     viewId: null,
+    // The annotations section is folded shut on every render. These remember
+    // that the reader opened it, so a save — which re-renders the page — does
+    // not slam it shut under them; a different file starts folded again.
+    sectionKey: null,
+    sectionOpen: false,
     confirm: null,
     confirmBtn: null,
     confirmLabel: '',
@@ -53,6 +58,7 @@
   };
 
   const mdRoot = () => els.page.querySelector('.md');
+  const fileKey = () => (state.file ? `${state.current}/${state.file.path}` : '');
   const elemOf = (n) => (n && n.nodeType === 1 ? n : n && n.parentElement);
   const railVisible = () => rail && !rail.hidden && getComputedStyle(rail).display !== 'none';
   const entryOf = (id) => st.entries.find((e) => e.id === id) || null;
@@ -178,15 +184,19 @@
   // it renders back would then compete with the passage, and every annotation
   // in the file would come out `trecho ambíguo`. Keep in step with MARKER_RE.
   const ANN_COMMENT = /^\s*ann:(note|claude|hl)\s/;
+  const ANN_END = /^\s*\/ann\s*$/;
 
   // The annotations section renders like any other markdown at the foot of the
-  // page; tagging it keeps it out of matching, selection and the text index.
+  // page; wrapping it keeps it out of matching, selection and the text index —
+  // and folds it away, because it is storage. What the reader came for is the
+  // marks in the text and the cards beside them; the section is the same thing
+  // spelled out twice, and it grows without bound.
   //
   // A heading only counts once an entry marker follows it, and then the *first*
   // such heading wins. That way a stray duplicate heading (hand-edited in) still
   // shields every entry below it, while a document that happens to have its own
   // unrelated "## Annotations" section is left alone.
-  function markSection(md) {
+  function markSection(md, count) {
     let h = null;
     for (const el of md.children) {
       if (el.tagName !== 'H2' || el.textContent.trim() !== 'Annotations') continue;
@@ -199,8 +209,44 @@
       if (h) break;
     }
     if (!h) return;
-    h.classList.add('ann-section');
-    for (let n = h.nextElementSibling; n; n = n.nextElementSibling) n.classList.add('ann-section');
+
+    // The section ends where its entries do, not at the end of the document:
+    // a file can have grown a section of its own *below* the annotations, and
+    // folding that away (or shielding it from matching) would be wrong. The
+    // entry markers bound it — the first heading reached outside an entry is
+    // somebody else's.
+    const body = [];
+    let inEntry = false;
+    for (let n = h.nextSibling; n; n = n.nextSibling) {
+      if (n.nodeType === Node.COMMENT_NODE) {
+        if (ANN_COMMENT.test(n.nodeValue)) inEntry = true;
+        else if (ANN_END.test(n.nodeValue)) inEntry = false;
+      } else if (!inEntry && (n.tagName === 'H1' || n.tagName === 'H2')) {
+        break;
+      }
+      body.push(n);
+    }
+
+    // The heading becomes the lever. The class rides on the wrapper alone:
+    // every lookup walks up from a text node or uses `closest`, so one tag on
+    // the ancestor shields the whole subtree.
+    const details = document.createElement('details');
+    details.className = 'ann-section';
+    details.open = st.sectionOpen;
+    const summary = document.createElement('summary');
+    md.insertBefore(details, h);
+    details.appendChild(summary);
+    summary.appendChild(h); // keeps the heading's id, so the ToC link still lands
+    if (count) {
+      const n = document.createElement('span');
+      n.className = 'ann-count';
+      n.textContent = String(count);
+      h.appendChild(n);
+    }
+    for (const n of body) details.appendChild(n);
+    details.addEventListener('toggle', () => {
+      st.sectionOpen = details.open;
+    });
   }
 
   function anchorAll(md, entries) {
@@ -1126,8 +1172,14 @@
       clear();
       return;
     }
-    markSection(md);
+    // Folded shut, unless this is the same file re-rendering under a reader who
+    // opened it — a save, the 2 s autoreload and the theme re-route all land here.
+    if (st.sectionKey !== fileKey()) {
+      st.sectionKey = fileKey();
+      st.sectionOpen = false;
+    }
     const entries = Ann.parse(state.file.content || '').entries;
+    markSection(md, entries.length);
     // Registered before anchoring so anything that looks an entry up by id —
     // including a click landing mid-render — sees the same list the marks
     // were built from.

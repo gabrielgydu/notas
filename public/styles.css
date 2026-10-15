@@ -326,6 +326,23 @@ body {
   box-shadow: inset 2px 0 0 var(--term-amber);
 }
 
+/* A PDF leaves Notas when clicked, so it says so rather than passing for a note.
+   The name gets its own box: on the anchor itself the ellipsis would eat the tag. */
+.tree a.file.pdf { display: flex; align-items: baseline; gap: 7px; }
+.tree a.file.pdf > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tree a.file.pdf::after {
+  content: 'pdf';
+  flex: none;
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--term-dim);
+  border: 1px solid var(--term-border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.tree a.file.pdf:hover::after { color: var(--term-amber); }
+
 .sidebar-foot {
   display: flex;
   gap: 8px;
@@ -857,6 +874,37 @@ body {
   border-radius: 999px;
 }
 
+/* the project badge stays the accent one — "pdf" is a file type, not a place */
+.badge.pdf { color: var(--muted); border-color: var(--rule-strong); }
+
+/* Landing view for a #/p/… URL that points at a PDF (a bookmark, or notas-open
+   handing one over). The reader has nothing to render, so it offers the tab. */
+.pdf-card {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--code-bg);
+  padding: 22px 24px;
+}
+.pdf-card p {
+  margin: 0 0 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+.pdf-open {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 13px;
+  text-decoration: none;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-soft);
+  padding: 8px 16px;
+  border-radius: 7px;
+  transition: background 0.12s ease;
+}
+.pdf-open:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
 .result-file { border-bottom: none; padding-bottom: 2px; display: flex; align-items: baseline; gap: 8px; }
 .result-file .recent-name { color: var(--accent); min-width: 0; }
 .result-file .badge { flex: none; align-self: center; }
@@ -892,6 +940,45 @@ body {
 /* ------------------------------------------------------------
    Annotations — highlights in the text, cards in the left margin
    ------------------------------------------------------------ */
+
+/* The section at the foot of the file is storage, not reading matter — folded
+   shut on every render, with its own heading as the lever. It opens on click or
+   on Enter/Space, and stays open while the file re-renders under it. */
+.md details.ann-section > summary {
+  list-style: none;
+  cursor: pointer;
+}
+.md details.ann-section > summary::-webkit-details-marker { display: none; }
+.md details.ann-section > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 4px;
+}
+
+/* The heading keeps every `.md h2` rule — size, rule beneath, scroll-margin for
+   the ToC link — and gains the disclosure triangle as a flex item. */
+.md details.ann-section > summary > h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  transition: color 0.12s ease;
+}
+.md details.ann-section > summary > h2::before {
+  content: '▸';
+  font-size: 0.6em;
+  color: var(--muted);
+}
+.md details.ann-section[open] > summary > h2::before { content: '▾'; }
+.md details.ann-section > summary:hover > h2,
+.md details.ann-section > summary:hover > h2::before { color: var(--accent); }
+
+/* how many entries are folded away */
+.md .ann-count {
+  font-family: var(--mono);
+  font-size: 0.58em;
+  font-weight: 500;
+  color: var(--muted);
+}
 
 /* Must beat `.page mark` (the search highlight): tint plus a hairline, no pill.
    A quote crossing element boundaries becomes several sibling marks, so nothing

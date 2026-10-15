@@ -113,6 +113,17 @@
 
   const isExternal = (href) => /^([a-z]+:)?\/\//i.test(href) || /^(mailto:|tel:|#)/i.test(href);
 
+  // The two ways to point at a file. Markdown routes into the reader (hash);
+  // everything else — PDFs, images, whatever a note links to — is served as
+  // bytes and belongs to the browser.
+  const encPath = (relPath) => relPath.split('/').map(encodeURIComponent).join('/');
+  const hashURL = (project, relPath) => `#/p/${encodeURIComponent(project)}/${encPath(relPath)}`;
+  const rawURL = (project, relPath) =>
+    `/api/raw?project=${encodeURIComponent(project)}&path=${encodeURIComponent(relPath)}`;
+
+  const isPdf = (relPath) => /\.pdf$/i.test(relPath);
+  const NEW_TAB = ' target="_blank" rel="noopener"';
+
   /* ---------- markdown setup ---------- */
 
   const wikilinkExt = {
@@ -135,30 +146,33 @@
 
   marked.use({ gfm: true, extensions: [wikilinkExt] });
 
+  // Notes made for the printer carry their own <style> (near-black ink, tight
+  // margins). In the page it would restyle Notas itself, so it is dropped.
+  // A <style> shown in a code block is already escaped and doesn't match.
+  const STYLE_BLOCK = /<style\b[^>]*>[\s\S]*?<\/style\s*>/gi;
+
   function renderMarkdown(text, project, fileDir) {
     const renderer = {
       link(href, title, body) {
         if (href && !isExternal(href)) {
           const resolved = resolveRel(fileDir, decodeURI(href));
           if (/\.(md|markdown)$/i.test(resolved)) {
-            return `<a href="#/p/${encodeURIComponent(project)}/${resolved.split('/').map(encodeURIComponent).join('/')}"${title ? ` title="${esc(title)}"` : ''}>${body}</a>`;
+            return `<a href="${hashURL(project, resolved)}"${title ? ` title="${esc(title)}"` : ''}>${body}</a>`;
           }
-          const raw = `/api/raw?project=${encodeURIComponent(project)}&path=${encodeURIComponent(resolved)}`;
-          return `<a href="${raw}" target="_blank"${title ? ` title="${esc(title)}"` : ''}>${body}</a>`;
+          return `<a href="${rawURL(project, resolved)}"${NEW_TAB}${title ? ` title="${esc(title)}"` : ''}>${body}</a>`;
         }
         return false; // default
       },
       image(href, title, alt) {
         if (href && !isExternal(href)) {
           const resolved = resolveRel(fileDir, decodeURI(href));
-          const raw = `/api/raw?project=${encodeURIComponent(project)}&path=${encodeURIComponent(resolved)}`;
-          return `<img src="${raw}" alt="${esc(alt || '')}"${title ? ` title="${esc(title)}"` : ''} loading="lazy">`;
+          return `<img src="${rawURL(project, resolved)}" alt="${esc(alt || '')}"${title ? ` title="${esc(title)}"` : ''} loading="lazy">`;
         }
         return false;
       },
     };
     marked.use({ renderer });
-    return marked.parse(text);
+    return marked.parse(text).replace(STYLE_BLOCK, '');
   }
 
   /* ---------- mdt transclusion ---------- */
@@ -231,7 +245,7 @@
         cap.textContent = `congelado ${a.at || ''} — ${label}`.trim();
       } else if (project && src) {
         const link = document.createElement('a');
-        link.href = `#/p/${encodeURIComponent(project)}/${src.split('/').map(encodeURIComponent).join('/')}`;
+        link.href = hashURL(project, src);
         link.textContent = label;
         cap.appendChild(link);
       } else {
@@ -402,7 +416,10 @@
     const spy = () => {
       let current = null;
       headings.forEach((h) => {
-        if (h.getBoundingClientRect().top < 120) current = h.id;
+        const r = h.getBoundingClientRect();
+        // A heading folded inside the annotations section measures zero at the
+        // top of the page; it is last in the document, so it would win every time.
+        if (r.height && r.top < 120) current = h.id;
       });
       links.forEach((a) => a.classList.toggle('current', a.dataset.target === current));
     };
@@ -474,6 +491,63 @@
     startPolling(project, relPath);
   }
 
+  /* Every ordinary route to a PDF — tree, busca, recentes, a relative link in a
+   * note — is a plain target="_blank" anchor, so the click itself opens the tab
+   * and this view is never reached. It exists for a *typed* #/p/… URL: a
+   * bookmark, or the notas-open skill handing over a path. There was no click to
+   * hang a tab off, so we try to open one and leave a link behind either way
+   * (popup blockers make the attempt unreliable, never the fallback). */
+  const pdfAutoOpened = new Set();
+
+  async function showPdf(project, relPath) {
+    stopPolling();
+    state.file = null;
+    state.search = null;
+    window.NotasAnnUI?.clear();
+    els.copyPath.hidden = true;
+    els.mtime.textContent = '';
+    els.toc.hidden = true;
+
+    const name = relPath.split('/').pop();
+    setCrumbs([project, ...relPath.split('/').slice(0, -1)], name);
+    setTitle(name);
+
+    // A bookmark outlives the file it points at. /api/stat is one cheap call,
+    // and its 404 is the whole difference between saying "opened it" and opening
+    // a tab full of the server's bare "not found".
+    let missing = false;
+    try {
+      await api('/api/stat', { project, path: relPath });
+    } catch {
+      missing = true;
+    }
+
+    const url = rawURL(project, relPath);
+    // Once per path: the `online` listener re-routes when there is no open file,
+    // and a PDF leaves state.file null — without the guard, losing wifi for a
+    // moment would spawn a second tab.
+    const key = `${project} ${relPath}`;
+    let opened = false;
+    if (!missing && !pdfAutoOpened.has(key)) {
+      pdfAutoOpened.add(key);
+      opened = Boolean(window.open(url, '_blank'));
+    }
+
+    els.page.innerHTML = missing
+      ? `<h1 class="view-title">${esc(name)}</h1>
+      <div class="view-sub">${esc(project)}</div>
+      <div class="empty">n&atilde;o encontrei esse arquivo</div>`
+      : `<h1 class="view-title">${esc(name)}</h1>
+      <div class="view-sub">${esc(project)} — ${esc(relPath)}</div>
+      <div class="pdf-card">
+        <p>${opened ? 'aberto em nova aba.' : 'pdf — o visualizador do navegador cuida dele.'}</p>
+        <a class="pdf-open" href="${url}"${NEW_TAB}>abrir em nova aba ↗</a>
+      </div>`;
+
+    if (project === '~') await ensureVisible(relPath, project);
+    markActiveInTree(relPath);
+  }
+
   async function showRecentes() {
     stopPolling();
     state.file = null;
@@ -498,10 +572,11 @@
           html += `<div class="day-label">${esc(label)}</div>`;
           lastDay = label;
         }
-        const href = `#/p/${encodeURIComponent(it.project)}/${it.path.split('/').map(encodeURIComponent).join('/')}`;
-        html += `<a class="recent-row" style="--i:${i}" href="${href}">
+        const pdf = it.kind === 'pdf';
+        const href = pdf ? rawURL(it.project, it.path) : hashURL(it.project, it.path);
+        html += `<a class="recent-row" style="--i:${i}" href="${href}"${pdf ? NEW_TAB : ''}>
           <div class="recent-name">${esc(it.path.split('/').pop())}</div>
-          <div class="recent-meta"><span class="badge">${esc(it.project)}</span><span>${esc(it.path)}</span><span>${esc(humanTime(it.mtime))}</span></div>
+          <div class="recent-meta"><span class="badge">${esc(it.project)}</span>${pdf ? '<span class="badge pdf">pdf</span>' : ''}<span>${esc(it.path)}</span><span>${esc(humanTime(it.mtime))}</span></div>
         </a>`;
       });
     }
@@ -551,6 +626,21 @@
     return files;
   }
 
+  /* Mark the hits on the *raw* text, escaping around them. Escaping first and
+   * wrapping afterwards splits any entity whose name the query matches — `amp`
+   * turns `&amp;` into `&<mark>amp</mark>;`, which renders as literal text. A
+   * PDF matches on its filename and nothing else, so this is the only
+   * highlighting one ever gets. */
+  function markHits(text, rx) {
+    let html = '';
+    let last = 0;
+    for (const m of text.matchAll(rx)) {
+      html += esc(text.slice(last, m.index)) + `<mark>${esc(m[0])}</mark>`;
+      last = m.index + m[0].length;
+    }
+    return html + esc(text.slice(last));
+  }
+
   // Re-renders from state.search — sorting never refetches.
   function renderSearchResults() {
     const { q, project, data } = state.search;
@@ -561,20 +651,30 @@
         </div>`
       : '';
 
+    // PDFs are never read, so they can only ever be filename hits — say so once
+    // in the summary instead of leaving "0 ocorrências em 3 arquivos" to explain
+    // itself.
+    const pdfCount = data.files.filter((f) => f.kind === 'pdf').length;
+    const pdfNote = pdfCount ? ` (${pdfCount} pdf pelo nome)` : '';
+
     let html = `<h1 class="view-title">“${esc(q)}”</h1>
-      <div class="view-sub${sortbar ? ' tight' : ''}">${data.total} ocorrência${data.total === 1 ? '' : 's'} em ${data.files.length} arquivo${data.files.length === 1 ? '' : 's'} — projeto ${esc(project)}${data.truncated ? ' (parcial)' : ''}</div>${sortbar}`;
+      <div class="view-sub${sortbar ? ' tight' : ''}">${data.total} ocorrência${data.total === 1 ? '' : 's'} em ${data.files.length} arquivo${data.files.length === 1 ? '' : 's'}${pdfNote} — projeto ${esc(project)}${data.truncated ? ' (parcial)' : ''}</div>${sortbar}`;
 
     if (data.files.length === 0) html += '<div class="empty">nada encontrado</div>';
 
     const rx = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig');
     for (const f of sortedResults(data.files)) {
-      const href = `#/p/${encodeURIComponent(project)}/${f.path.split('/').map(encodeURIComponent).join('/')}`;
-      const name = f.nameMatch ? esc(f.path).replace(rx, (s) => `<mark>${s}</mark>`) : esc(f.path);
-      const badge = f.nameMatch ? '<span class="badge">nome</span>' : '';
+      const pdf = f.kind === 'pdf';
+      const href = pdf ? rawURL(project, f.path) : hashURL(project, f.path);
+      const name = f.nameMatch ? markHits(f.path, rx) : esc(f.path);
+      // "pdf" already implies "nome" — a PDF has no other way of matching.
+      const badge = pdf
+        ? '<span class="badge pdf">pdf</span>'
+        : f.nameMatch ? '<span class="badge">nome</span>' : '';
       const when = f.mtime ? `<span class="result-time">${esc(humanTime(f.mtime))}</span>` : '';
-      html += `<a class="result-file" href="${href}"><div class="recent-name">${name}</div>${badge}${when}</a>`;
+      html += `<a class="result-file" href="${href}"${pdf ? NEW_TAB : ''}><div class="recent-name">${name}</div>${badge}${when}</a>`;
       for (const m of f.matches) {
-        html += `<a class="result-line" href="${href}"><span class="ln">${m.line}</span>${esc(m.text).replace(rx, (s) => `<mark>${s}</mark>`)}</a>`;
+        html += `<a class="result-line" href="${href}"><span class="ln">${m.line}</span>${markHits(m.text, rx)}</a>`;
       }
     }
     els.page.innerHTML = html;
@@ -598,14 +698,23 @@
   // expanded folders and lazily-loaded children) without a refetch.
   const liData = (n) => `data-type="${n.type}" data-name="${esc(n.name)}" data-mtime="${n.mtime || 0}"`;
 
+  // A PDF row is a plain link to the bytes, opened in its own tab — the click
+  // never enters the router, so the note you were reading stays on screen.
+  // The name is wrapped so the "pdf" tag can sit outside the ellipsis.
+  function fileRowHTML(n, project) {
+    if (n.kind === 'pdf') {
+      return `<li ${liData(n)}><a class="file pdf" data-path="${esc(n.path)}" href="${rawURL(project, n.path)}"${NEW_TAB}><span>${esc(n.name)}</span></a></li>`;
+    }
+    return `<li ${liData(n)}><a class="file" data-path="${esc(n.path)}" href="${hashURL(project, n.path)}">${esc(n.name)}</a></li>`;
+  }
+
   function treeHTML(nodes, project) {
     let html = '<ul>';
     for (const n of nodes) {
       if (n.type === 'dir') {
         html += `<li ${liData(n)}><details data-dir="${esc(n.path)}"><summary>${esc(n.name)}</summary>${treeHTML(n.children, project)}</details></li>`;
       } else {
-        const href = `#/p/${encodeURIComponent(project)}/${n.path.split('/').map(encodeURIComponent).join('/')}`;
-        html += `<li ${liData(n)}><a class="file" data-path="${esc(n.path)}" href="${href}">${esc(n.name)}</a></li>`;
+        html += fileRowHTML(n, project);
       }
     }
     return html + '</ul>';
@@ -619,8 +728,7 @@
       if (n.type === 'dir') {
         html += `<li ${liData(n)}><details data-dir="${esc(n.path)}" data-loaded="0"><summary>${esc(n.name)}</summary></details></li>`;
       } else {
-        const href = `#/p/${encodeURIComponent(project)}/${n.path.split('/').map(encodeURIComponent).join('/')}`;
-        html += `<li ${liData(n)}><a class="file" data-path="${esc(n.path)}" href="${href}">${esc(n.name)}</a></li>`;
+        html += fileRowHTML(n, project);
       }
     }
     return html + '</ul>';
@@ -735,6 +843,7 @@
         renderProjects();
         await loadTree(project);
       }
+      if (isPdf(relPath)) return showPdf(project, relPath);
       try {
         await openFile(project, relPath);
       } catch (e) {
@@ -911,11 +1020,18 @@
     e.preventDefault();
     const name = a.dataset.wikilink;
     try {
-      const { path } = await api('/api/resolve', { project: state.current, name });
-      if (path) {
-        location.hash = `#/p/${encodeURIComponent(state.current)}/${path.split('/').map(encodeURIComponent).join('/')}`;
-      } else {
+      const { path, kind } = await api('/api/resolve', { project: state.current, name });
+      if (!path) {
         toast(`sem arquivo para [[${name}]]`);
+      } else if (kind === 'pdf') {
+        // The await above ended the gesture's task, so this open can still be
+        // refused — Chrome's transient activation usually covers it, Safari
+        // does not. The card route is the fallback that always leaves a link.
+        if (!window.open(rawURL(state.current, path), '_blank')) {
+          location.hash = hashURL(state.current, path);
+        }
+      } else {
+        location.hash = hashURL(state.current, path);
       }
     } catch {
       toast('erro ao resolver link');
