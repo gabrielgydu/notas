@@ -621,7 +621,7 @@
     let session;
     try {
       session = await D.start({
-        // AAI revises turns instead of appending, so the handler always gets the
+        // stt revises turns instead of appending, so the handler always gets the
         // whole transcript and always replaces.
         onText: (t) => {
           if (gen === mic.gen && (mic.state === 'starting' || mic.state === 'live')) {
@@ -677,8 +677,8 @@
     mic.live = '';
   }
 
-  // Bounded: a final formatted revision usually lands in a few hundred ms, but a
-  // dead socket must never hold the save hostage.
+  // Bounded: after the end of audio the provider finalizes the last turn in a
+  // network round trip, but a dead socket must never hold the save hostage.
   async function micStopForSave() {
     if (!mic.session) {
       if (mic.state !== 'off') micPause();
@@ -691,7 +691,7 @@
     micStatus('salvando…');
     let final = null;
     try {
-      final = await s.stop(800);
+      final = await s.stop(2000);
     } catch { /* keep what we already have */ }
     if (final) {
       mic.live = final;
@@ -805,7 +805,7 @@
   /* ---------- write ---------- */
 
   // A save can land after the reader has moved on (the mic wait alone is up to
-  // 800 ms). The write still belongs to the file it was made on, but nothing
+  // 2 s). The write still belongs to the file it was made on, but nothing
   // after it may touch — or yank the reader back to — a file they left.
   const stillOn = (project, relPath) =>
     state.current === project && state.file && state.file.path === relPath;

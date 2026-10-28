@@ -240,7 +240,7 @@ Below that, clicking a `nota`/`claude` mark opens a popover with the comment and
 
 Clicking a `marca` always opens its own popover, rail or no rail.
 
-Writes need a trusted caller: `/api/annotate`, `/api/annotate/delete`, `/api/annotate/color`, `/api/create` and `/api/aai-token` accept a direct localhost request, or a tailnet request whose Tailscale login is listed in `NOTAS_WRITERS`.
+Writes need a trusted caller: `/api/annotate`, `/api/annotate/delete`, `/api/annotate/color`, `/api/create` and the dictation socket `/api/dictate` accept a direct localhost request, or a tailnet request whose Tailscale login is listed in `NOTAS_WRITERS`.
 
 `tailscale serve` sets `X-Forwarded-For` on everything it proxies, which a direct localhost request never carries.
 
@@ -258,28 +258,46 @@ A JSON POST from another origin needs a CORS preflight first, which Notas never 
 
 ### Ditado (dictation)
 
-The popover records straight into the comment box via AssemblyAI
-Universal-Streaming v3.
+The popover records straight into the comment box.
+
+The browser sends the mic's audio (16 kHz mono PCM) over a WebSocket to `/api/dictate`, and the notas server runs one `stt stream` per session and passes its JSON lines back unchanged.
+
+stt (`~/development/stt`) is the speech-to-text tool every transcriber on this machine shares: Soniox by default, AssemblyAI selectable.
+
+It owns the provider, the API key, the language hints and the key terms, all in `~/.config/stt/config`; notas reads no speech config and holds no key.
 
 Two prerequisites:
 
-- `~/.config/audiorecorder/config` must have `assemblyai_api_key=…` (optionally
-  `assemblyai_keyterms=a,b,c`). The key never leaves the server; the browser gets a
-  60-second token from `/api/aai-token`.
+- stt installed (`~/development/stt/install.sh` links `~/.local/bin/stt`), with python-websockets and a key for its provider; `stt check` says whether live transcription is ready.
 
-  **Only the first 100 keyterms are sent.** Streaming v3 rejects more than that
-  (`error_code 3006`), closing the session the moment it opens — and everything
-  travels in the WebSocket URL, whose request line dies just past 8192 bytes, so
-  the list is trimmed again if the token pushes it over. The config's own comment
-  quotes the *batch* API's limit of 1000; that number does not apply here. How many
-  were actually sent is logged to the console on every connection.
-- The mic needs a secure context. `http://notas/` is not one, so Brave is launched
-  with `--unsafely-treat-insecure-origin-as-secure=http://notas`. Without the flag
-  the popover just says `ditado indisponível — digite` and typing still works.
+  notas runs `~/.local/bin/stt` by absolute path, because the systemd user manager's PATH has no `~/.local/bin`; `NOTAS_STT_BIN` points it elsewhere.
+- The mic needs a secure context.
 
-Typing while the mic is live pauses it and folds the transcript into what you have
-— the mic button re-arms with a fresh session that appends. Saving mid-sentence
-waits up to 800 ms for the final formatted revision, then writes.
+  `http://notas/` is not one, so Brave is launched with `--unsafely-treat-insecure-origin-as-secure=http://notas`.
+
+  Without the flag the popover just says `ditado indisponível — digite` and typing still works.
+
+The socket takes the same trusted callers as a write (see *Where it works*).
+
+It also checks the Origin, because a WebSocket handshake is not covered by CORS: without the check, any page open in the browser could stream audio through the paid provider and read the transcript.
+
+Allowed are no Origin (a local client that is not a browser), `http://notas`, `http://127.0.0.1` and `http://localhost` (with or without `:7777`), and whatever `NOTAS_ORIGINS` lists; anything else gets a 403 before stt starts.
+
+Dictating from the phone through `tailscale serve` therefore needs the tailnet URL in `NOTAS_ORIGINS`, e.g. `Environment=NOTAS_ORIGINS=https://<machine>.<tailnet>.ts.net:8443` in the service unit.
+
+On one of those names, an Origin with another port passes too when it matches the request's own Host, as when notas listens on another port.
+
+Any other name is refused even when it matches the Host: after DNS rebinding, a hostile page's own name points at 127.0.0.1, and its Host and Origin agree.
+
+Closing the socket cancels the session: notas sends stt a SIGTERM, then a SIGKILL 2 s later if it is still running.
+
+A session that gets no audio for 30 s, such as a phone that went to sleep, is ended the same way, so a paid session never outlives its page.
+
+stt sends as many key terms as the provider takes, most important first; when it has to cut the list, its note saying how many went out shows up in the browser console.
+
+Typing while the mic is live pauses it and folds the transcript into what you have; the mic button re-arms with a fresh session that appends.
+
+Saving mid-sentence ends the audio and waits up to 2 s for stt's last turn, then writes.
 
 ## Creating files (`/api/create`)
 
@@ -306,10 +324,25 @@ Env vars:
 - `NOTAS_PORTS` (default `80,7777`; `NOTAS_PORT` is still read as a one-port alias).
 - `NOTAS_HOST` (default 127.0.0.1 — set `0.0.0.0` to reach it from the phone on the same network; there is no auth, so only do that on trusted networks).
 - `NOTAS_WRITERS` (comma-separated Tailscale logins allowed to write through `tailscale serve`; default none — see the write rules above).
+- `NOTAS_STT_BIN` (default `~/.local/bin/stt`; the stt command dictation runs).
+- `NOTAS_ORIGINS` (comma-separated extra origins allowed to open the dictation socket, e.g. the tailnet URL `https://<machine>.<tailnet>.ts.net:8443`).
+- `NOTAS_DICTATE_IDLE_MS` (default 30000; how long a dictation session may go without audio before it is ended).
 
 Only `.md`/`.markdown` and `.pdf` files are listed. Hidden dirs, `node_modules`, `.git`,
 `.obsidian`, `.sync`, `.claude` are skipped. Path traversal outside project
 roots is blocked server-side.
+
+## Tests
+
+```sh
+node --test      # or: npm test
+```
+
+They start notas on free ports and drive `/api/dictate` with Node's own WebSocket client, through the real `stt` and its fake provider: no network, no key, never the real config.
+
+A generated stand-in for stt covers what the fake provider cannot show, such as the exact bytes stt received or an stt that ignores SIGTERM.
+
+`NOTAS_TEST_STT` points them at another stt (default `~/development/stt/bin/stt`).
 
 ## License
 

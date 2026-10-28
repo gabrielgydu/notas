@@ -4,6 +4,7 @@
   "private": true,
   "description": "Tiny local markdown reader — terminal sidebar, book-page rendering.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   }
 }

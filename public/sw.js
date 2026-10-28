@@ -4,7 +4,7 @@
    Everything is network-first: on the tailnet the server is the source of
    truth, the cache only steps in when it's unreachable. */
 
-const VERSION = 'v12';
+const VERSION = 'v13';
 const SHELL_CACHE = `notas-shell-${VERSION}`;
 const DATA_CACHE = `notas-data-${VERSION}`;
 
@@ -77,8 +77,8 @@ self.addEventListener('fetch', (e) => {
   if (url.origin !== location.origin) return; // e.g. mermaid CDN
 
   // mtime polling stays network-only — a cached answer would defeat autoreload.
-  // The dictation token lives 60 s; a cached one is always a dead one.
-  if (url.pathname === '/api/stat' || url.pathname === '/api/aai-token') return;
+  // (Dictation's WebSocket never comes through here.)
+  if (url.pathname === '/api/stat') return;
 
   if (url.pathname.startsWith('/api/')) {
     e.respondWith(networkFirst(req, DATA_CACHE));

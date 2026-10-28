@@ -7,6 +7,9 @@ const fs = require('node:fs');
 const fsp = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
+const crypto = require('node:crypto');
+const readline = require('node:readline');
+const { spawn } = require('node:child_process');
 
 // mdt — markdown transclusion (~/development/mdt). Optional on purpose: Notas
 // must still boot if it is missing or broken, serving files literally.
@@ -674,53 +677,369 @@ async function handleCreate(req, res) {
   });
 }
 
-/* ---------- dictation token ----------
+/* ---------- dictation ----------
  *
- * The AssemblyAI API key never leaves this process; the browser gets a token
- * that expires in 60 seconds. */
+ * The browser streams raw PCM (s16le, 16 kHz, mono) over a same-origin
+ * WebSocket, /api/dictate. Each socket gets its own `stt stream` child
+ * (~/development/stt): binary frames go to its stdin, its stdout lines come
+ * back verbatim as text frames, and a {"type":"stop"} text frame ends its
+ * stdin, which tells stt to finalize. stt owns the provider, the key, the
+ * language hints and the key terms (~/.config/stt/config); none of them
+ * live here.
+ *
+ * Closing the socket cancels: SIGTERM, then SIGKILL if stt is still there
+ * KILL_GRACE_MS later. A paid session must never outlive its page. */
 
-async function dictationConfig() {
-  const file = path.join(os.homedir(), '.config', 'audiorecorder', 'config');
-  let text;
+// Absolute by default: the systemd user manager's PATH has no ~/.local/bin.
+const STT_BIN = process.env.NOTAS_STT_BIN || path.join(os.homedir(), '.local', 'bin', 'stt');
+// A phone that sleeps mid-dictation never sends a close frame. Every audio
+// frame and the stop re-arm this; when it runs out the session is killed.
+const DICTATE_IDLE_MS = Number(process.env.NOTAS_DICTATE_IDLE_MS) || 30000;
+const KILL_GRACE_MS = 2000;
+// stt reads its stdin eagerly from the moment it starts, so audio piling up
+// in the pipe means it has stopped reading. 10 s of 16 kHz s16le.
+const STDIN_BACKLOG = 10 * 16000 * 2;
+
+/* A WebSocket handshake is not covered by CORS: without this check any page
+ * open in the browser could connect to ws://127.0.0.1/api/dictate (canWrite
+ * passes every direct localhost request), stream audio through the paid
+ * provider and read the transcript back. A missing Origin is a non-browser
+ * local client. */
+const DICTATE_ORIGINS = new Set(
+  [
+    'http://notas',
+    'http://127.0.0.1',
+    'http://127.0.0.1:7777',
+    'http://localhost',
+    'http://localhost:7777',
+    ...(process.env.NOTAS_ORIGINS || '').split(','),
+  ]
+    .map((s) => s.trim().toLowerCase().replace(/\/+$/, ''))
+    .filter(Boolean)
+);
+
+// The names those origins carry. Only on one of them may an Origin pass by
+// matching the request's own Host (notas on another port): after DNS
+// rebinding, a hostile page's name points at 127.0.0.1 and its Host and
+// Origin agree.
+const DICTATE_HOSTNAMES = new Set(
+  [...DICTATE_ORIGINS]
+    .map((o) => {
+      try {
+        return new URL(o).hostname;
+      } catch {
+        return '';
+      }
+    })
+    .filter(Boolean)
+);
+
+function originAllowed(req) {
+  const origin = req.headers.origin;
+  if (origin === undefined) return true;
+  let url;
   try {
-    text = await fsp.readFile(file, 'utf8');
+    url = new URL(origin);
   } catch {
-    return {};
+    return false; // "null" (sandboxed frames, file://) and garbage
   }
-  const out = {};
-  for (const line of text.split('\n')) {
-    const s = line.trim();
-    // A commented-out older key sits above the live one — skipping `#` lines is
-    // the difference between a working mic and a 401.
-    if (!s || s.startsWith('#')) continue;
-    const i = s.indexOf('=');
-    if (i <= 0) continue;
-    out[s.slice(0, i).trim()] = s.slice(i + 1).trim(); // last assignment wins
-  }
-  return out;
+  if (DICTATE_HOSTNAMES.has(url.hostname) && url.host === String(req.headers.host || '').toLowerCase()) return true;
+  return DICTATE_ORIGINS.has(origin.toLowerCase());
 }
 
-async function handleAaiToken(res) {
-  const cfg = await dictationConfig();
-  const key = cfg.assemblyai_api_key;
-  if (!key) return sendJSON(res, 503, { error: 'sem chave da AssemblyAI' });
-  let r;
-  try {
-    // Raw key, no "Bearer" — that is what the v3 token endpoint wants.
-    r = await fetch('https://streaming.assemblyai.com/v3/token?expires_in_seconds=60', {
-      headers: { Authorization: key },
-    });
-  } catch (e) {
-    return sendJSON(res, 502, { error: `token indisponível: ${e.message}` });
+/* RFC 6455, only the subset dictation needs. Node ships a WebSocket client but
+ * no server, and this server takes no dependencies. Messages are single
+ * frames: a browser sends each 100 ms audio buffer as one, so a fragmented
+ * message is refused with 1003 rather than half-handled. */
+
+const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const OP_TEXT = 0x1;
+const OP_BINARY = 0x2;
+const OP_CLOSE = 0x8;
+const OP_PING = 0x9;
+const OP_PONG = 0xa;
+const WS_OPCODES = new Set([OP_TEXT, OP_BINARY, OP_CLOSE, OP_PING, OP_PONG]);
+const WS_MAX_FRAME = 1024 * 1024;
+// A client that pings and never reads must not grow notas: past this much
+// unsent output a ping gets no pong (RFC 6455 lets a pong answer only the
+// latest ping anyway).
+const WS_PONG_BACKLOG = 64 * 1024;
+
+// Server frames are never masked.
+function wsFrame(opcode, payload) {
+  const len = payload.length;
+  let head;
+  if (len < 126) {
+    head = Buffer.from([0x80 | opcode, len]);
+  } else if (len < 65536) {
+    head = Buffer.alloc(4);
+    head[1] = 126;
+    head.writeUInt16BE(len, 2);
+  } else {
+    head = Buffer.alloc(10);
+    head[1] = 127;
+    head.writeBigUInt64BE(BigInt(len), 2);
   }
-  if (!r.ok) return sendJSON(res, 502, { error: `token indisponível: HTTP ${r.status}` });
-  const data = await r.json().catch(() => ({}));
-  if (!data.token) return sendJSON(res, 502, { error: 'token indisponível' });
-  const keyterms = String(cfg.assemblyai_keyterms || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return sendJSON(res, 200, { token: data.token, keyterms });
+  head[0] = 0x80 | opcode;
+  return Buffer.concat([head, payload]);
+}
+
+// `reason` stays ASCII, so the 123-byte cut can never split a character.
+function wsCloseFrame(code, reason = '') {
+  const payload = Buffer.alloc(2 + Math.min(reason.length, 123));
+  payload.writeUInt16BE(code, 0);
+  payload.write(reason.slice(0, 123), 2, 'ascii');
+  return wsFrame(OP_CLOSE, payload);
+}
+
+const wsError = (code, message) => Object.assign(new Error(message), { wsCode: code });
+
+// Returns a function to feed socket bytes into; it calls onFrame(opcode,
+// payload) once per whole frame and throws a wsError (with the close code) on
+// anything this subset refuses. The header is judged before the payload has
+// arrived, so a refused frame is never buffered. After a throw it must not be
+// fed again: it would keep the refused header and pile everything after it on.
+function wsParser(onFrame) {
+  let buf = Buffer.alloc(0);
+  return (chunk) => {
+    buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+    for (;;) {
+      if (buf.length < 2) return;
+      const fin = buf[0] & 0x80;
+      const opcode = buf[0] & 0x0f;
+      let len = buf[1] & 0x7f;
+      let off = 2;
+      if (len === 126) {
+        if (buf.length < 4) return;
+        len = buf.readUInt16BE(2);
+        off = 4;
+      } else if (len === 127) {
+        if (buf.length < 10) return;
+        const big = buf.readBigUInt64BE(2);
+        len = big > BigInt(WS_MAX_FRAME) ? Infinity : Number(big);
+        off = 10;
+      }
+      if (buf[0] & 0x70) throw wsError(1002, 'reserved bits set');
+      if (!(buf[1] & 0x80)) throw wsError(1002, 'unmasked client frame');
+      if (!WS_OPCODES.has(opcode) && opcode !== 0) throw wsError(1002, 'unknown opcode');
+      if (!fin || opcode === 0) throw wsError(1003, 'fragmented messages not supported');
+      if (opcode >= OP_CLOSE && len > 125) throw wsError(1002, 'control frame too long');
+      if (len > WS_MAX_FRAME) throw wsError(1009, 'frame too large');
+      if (buf.length < off + 4 + len) return;
+      const mask = buf.subarray(off, off + 4);
+      // A copy, so unmasking never writes into a buffer the socket still owns.
+      const payload = Buffer.from(buf.subarray(off + 4, off + 4 + len));
+      for (let i = 0; i < len; i++) payload[i] ^= mask[i & 3];
+      buf = buf.subarray(off + 4 + len);
+      onFrame(opcode, payload);
+    }
+  };
+}
+
+function refuseUpgrade(socket, status, error) {
+  const body = JSON.stringify({ error });
+  socket.end(
+    `HTTP/1.1 ${status} ${http.STATUS_CODES[status]}\r\n` +
+      'Content-Type: application/json; charset=utf-8\r\n' +
+      `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+      'Connection: close\r\n\r\n' +
+      body
+  );
+}
+
+// An 'upgrade' listener runs outside the request handler's try/catch, and so
+// does every listener it attaches: an uncaught throw in any of them would take
+// the whole reader down. Hence the try here and guard() in dictate().
+function onUpgrade(req, socket, head) {
+  socket.on('error', () => { /* a reset ends in 'close', which cleans up */ });
+  try {
+    const p = new URL(req.url, 'http://localhost').pathname;
+    if (p !== '/api/dictate') return refuseUpgrade(socket, 404, 'not found');
+    // Same gate as the writes: dictation spends money and returns text.
+    if (!canWrite(req)) return refuseUpgrade(socket, 403, 'sem permissão de escrita pela tailnet (NOTAS_WRITERS)');
+    if (!originAllowed(req)) return refuseUpgrade(socket, 403, 'origem não permitida');
+    const key = req.headers['sec-websocket-key'];
+    if (
+      req.method !== 'GET' ||
+      String(req.headers.upgrade || '').toLowerCase() !== 'websocket' ||
+      req.headers['sec-websocket-version'] !== '13' ||
+      !key
+    ) {
+      return refuseUpgrade(socket, 400, 'bad websocket handshake');
+    }
+    const accept = crypto.createHash('sha1').update(key + WS_GUID).digest('base64');
+    socket.write(
+      'HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n' +
+        `Sec-WebSocket-Accept: ${accept}\r\n\r\n`
+    );
+    // Partials are small and late ones are useless: no Nagle.
+    socket.setNoDelay(true);
+    dictate(socket, head);
+  } catch (e) {
+    console.error('[notas] ditado:', e);
+    socket.destroy();
+  }
+}
+
+function dictate(socket, head) {
+  let closing = false; // our close frame is out, or the socket is gone
+  let stopped = false; // stdin ended: stt is finalizing
+  let killed = false;
+  let exited = false;
+  let told = false; // an error or end line reached the browser
+  let lastErr = '';
+  let idle = null;
+  let killTimer = null;
+
+  const child = spawn(STT_BIN, ['stream', '--rate', '16000'], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+  function guard(fn) {
+    return (...args) => {
+      try {
+        fn(...args);
+      } catch (e) {
+        console.error('[notas] ditado:', e);
+        closing = true;
+        socket.destroy();
+        kill();
+      }
+    };
+  }
+
+  function sendText(text) {
+    if (!closing && socket.writable) socket.write(wsFrame(OP_TEXT, Buffer.from(text, 'utf8')));
+  }
+
+  // Same shape as stt's own error line, so the browser has one error path.
+  function sendError(kind, message) {
+    told = true;
+    sendText(JSON.stringify({ type: 'error', kind, fatal: true, routine: false, retry_after: null, message }));
+  }
+
+  function close(code, reason) {
+    clearTimeout(idle);
+    if (closing) return;
+    closing = true;
+    if (socket.writable) socket.end(wsCloseFrame(code, reason));
+    // The browser answers with its own close frame and hangs up; one that
+    // never does must not keep the socket.
+    setTimeout(() => socket.destroy(), KILL_GRACE_MS).unref();
+  }
+
+  function kill() {
+    if (exited || killed) return;
+    killed = true;
+    child.kill('SIGTERM');
+    killTimer = setTimeout(guard(() => {
+      if (!exited) child.kill('SIGKILL');
+    }), KILL_GRACE_MS);
+    killTimer.unref();
+  }
+
+  function armIdle() {
+    clearTimeout(idle);
+    idle = setTimeout(guard(() => {
+      sendError('timeout', `sessão encerrada: ${Math.round(DICTATE_IDLE_MS / 1000)} s sem atividade`);
+      close(1000, 'idle');
+      kill();
+    }), DICTATE_IDLE_MS);
+  }
+
+  // The child is gone, or never started. Runs once.
+  function exit(code) {
+    if (exited) return;
+    exited = true;
+    clearTimeout(killTimer);
+    if (!killed && code !== 0 && !told) sendError('internal', lastErr || `stt saiu com status ${code}`);
+    close(code === 0 ? 1000 : 1011, code === 0 ? '' : `stt exit ${code}`);
+  }
+
+  // Without this listener a missing binary (ENOENT) would throw and kill
+  // notas. Spawn failures come with no pid, and then 'close' too (code -2).
+  child.on('error', guard((e) => {
+    if (child.pid !== undefined) return console.warn('[notas] ditado: stt:', e.message);
+    console.warn(`[notas] ditado: ${STT_BIN} não iniciou: ${e.code || e.message}`);
+    sendError('config', e.code === 'ENOENT' ? `stt não encontrado (${STT_BIN})` : `stt não iniciou: ${e.message}`);
+    exit(-1);
+  }));
+  child.on('close', guard((code, signal) => {
+    if (code !== 0 && !killed && child.pid !== undefined) {
+      console.warn(`[notas] ditado: stt saiu com status ${code === null ? signal : code}`);
+    }
+    exit(code === null ? -1 : code);
+  }));
+  // EPIPE once stt has exited; its exit says why.
+  child.stdin.on('error', () => {});
+
+  readline.createInterface({ input: child.stdout, crlfDelay: Infinity }).on('line', guard((line) => {
+    if (!line) return;
+    try {
+      const type = JSON.parse(line).type;
+      if (type === 'error' || type === 'end') told = true;
+    } catch { /* forwarded as is all the same */ }
+    sendText(line);
+  }));
+  // stt never prints a key, so its stderr can go to the journal as it is.
+  readline.createInterface({ input: child.stderr, crlfDelay: Infinity }).on('line', guard((line) => {
+    if (!line.trim()) return;
+    console.warn(`[notas] stt: ${line}`);
+    lastErr = line.replace(/^stt: /, '').slice(0, 300);
+  }));
+
+  const feed = wsParser((opcode, payload) => {
+    if (closing) return;
+    if (opcode === OP_BINARY) {
+      if (stopped || exited || !payload.length) return;
+      armIdle();
+      child.stdin.write(payload);
+      if (child.stdin.writableLength > STDIN_BACKLOG) {
+        sendError('internal', 'stt parou de ler o áudio');
+        close(1011, 'stt not reading');
+        kill();
+      }
+    } else if (opcode === OP_TEXT) {
+      let msg = null;
+      try {
+        msg = JSON.parse(payload.toString('utf8'));
+      } catch { /* not a command */ }
+      if (msg && msg.type === 'stop' && !stopped) {
+        stopped = true;
+        armIdle();
+        child.stdin.end();
+      }
+    } else if (opcode === OP_PING) {
+      if (socket.writable && socket.writableLength <= WS_PONG_BACKLOG) socket.write(wsFrame(OP_PONG, payload));
+    } else if (opcode === OP_CLOSE) {
+      // The browser hanging up means cancel, whatever stt was doing.
+      close(1000, '');
+      kill();
+    }
+  });
+
+  const onData = guard((chunk) => {
+    // Once our close frame is out, nothing the client sends matters, and a
+    // parser that has refused a frame must not be fed again.
+    if (closing) return;
+    try {
+      feed(chunk);
+    } catch (e) {
+      if (!e.wsCode) throw e;
+      close(e.wsCode, e.message);
+      kill();
+    }
+  });
+  socket.on('data', onData);
+  // http.Server sockets allow half-open, so a client that drops the TCP
+  // connection without a close frame only ends its side: no 'close' would
+  // ever come, and stt would run on.
+  socket.on('end', guard(() => socket.destroy()));
+  socket.on('close', guard(() => {
+    closing = true;
+    clearTimeout(idle);
+    kill();
+  }));
+  armIdle();
+  if (head && head.length) onData(head);
 }
 
 /* Single-range only. That is all a PDF viewer or an <img> ever asks for, and a
@@ -911,18 +1230,13 @@ const handler = async (req, res) => {
       p === '/api/annotate' ||
       p === '/api/annotate/delete' ||
       p === '/api/annotate/color' ||
-      p === '/api/create' ||
-      p === '/api/aai-token'
+      p === '/api/create'
     ) {
-      // Writes and token minting need a trusted caller, see canWrite().
+      // Writes need a trusted caller, see canWrite().
       if (!canWrite(req)) return sendJSON(res, 403, { error: 'sem permissão de escrita pela tailnet (NOTAS_WRITERS)' });
       // `return await`, not `return`: a bare `return promise` settles *after* this
       // try block has exited, so a disk error would escape as an unhandled
       // rejection — which Node turns into a process exit, killing the server.
-      if (p === '/api/aai-token') {
-        if (req.method !== 'GET') return sendJSON(res, 405, { error: 'method not allowed' });
-        return await handleAaiToken(res);
-      }
       if (req.method !== 'POST') return sendJSON(res, 405, { error: 'method not allowed' });
       if (!isJSON(req)) return sendJSON(res, 415, { error: 'use application/json' });
       if (p === '/api/annotate') return await handleAnnotate(req, res);
@@ -952,7 +1266,14 @@ const handler = async (req, res) => {
 };
 
 for (const port of PORTS) {
-  const server = http.createServer(handler);
+  // Only WebSocket handshakes go to onUpgrade; any other Upgrade (curl's
+  // --http2 asks for h2c) is served as the plain request it also is.
+  const server = http.createServer(
+    { shouldUpgradeCallback: (req) => String(req.headers.upgrade || '').toLowerCase() === 'websocket' },
+    handler
+  );
+  // Without an 'upgrade' listener Node drops every WebSocket handshake.
+  server.on('upgrade', onUpgrade);
   server.on('error', (err) => {
     console.warn(`[notas] could not bind port ${port}: ${err.code}`);
   });

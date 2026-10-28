@@ -1,7 +1,7 @@
 /* Notas — microphone → 16 kHz mono s16le, on the audio thread.
 
-   AssemblyAI's streaming endpoint wants signed 16-bit PCM at one fixed rate.
-   The browser hands us Float32 in 128-frame quanta at whatever rate the device
+   `stt stream` wants signed 16-bit PCM at one fixed rate (16 kHz here). The
+   browser hands us Float32 in 128-frame quanta at whatever rate the device
    runs at, so this does both conversions and batches the result into 100 ms
    messages — small enough to stay real-time, large enough that the main thread
    is not woken 375 times a second. */
@@ -34,12 +34,11 @@ class PCM16Processor extends AudioWorkletProcessor {
     }
   }
 
-  // The tail is shorter than a batch; zero-padding it keeps the last chunk above
-  // AssemblyAI's 50 ms minimum instead of clipping the final syllable.
+  // The tail is shorter than a batch and goes out as it is: stt takes any
+  // length, and dropping it would clip the final syllable.
   flush() {
     if (this.n > 0) {
-      const copy = new Int16Array(this.batch);
-      copy.set(this.out.subarray(0, this.n));
+      const copy = this.out.slice(0, this.n);
       this.n = 0;
       this.port.postMessage(copy.buffer, [copy.buffer]);
     }
