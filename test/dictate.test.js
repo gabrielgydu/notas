@@ -329,8 +329,8 @@ test('audio in, stt lines out verbatim, stop ends the session', async () => {
   assert.deepEqual(texts, [
     'fake turn 0 bytes=64000',
     'fake turn 1 bytes=64000',
-    // No terms and the config's default languages: notas passes neither.
-    'fake turn 2 end total=146900 terms=0 languages=pt,en,de',
+    // No terms and no languages: notas passes neither, and this config sets neither.
+    'fake turn 2 end total=146900 terms=0 languages=',
   ]);
   assert.ok(c.has((e) => e.type === 'partial' && e.turn === 0 && e.text === 'fake turn 0 word'));
   assert.equal(c.events().at(-1).type, 'end');
