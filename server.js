@@ -613,6 +613,36 @@ async function handleAnnotateColor(req, res) {
   });
 }
 
+async function handleAnnotateEdit(req, res) {
+  let body;
+  try {
+    body = await readJSON(req, res);
+  } catch (e) {
+    return sendJSON(res, e.status || 400, { error: e.message });
+  }
+  const t = await resolveWritable(body);
+  if (t.error) return sendJSON(res, t.status, { error: t.error });
+  const id = typeof body.id === 'string' ? body.id : '';
+  if (!/^[a-z0-9]{3,8}$/.test(id)) return sendJSON(res, 400, { error: 'bad id' });
+  // Emptying a comment is not how one is deleted — that is /delete, which the
+  // client puts behind a confirm. An entry with no body would be a note that
+  // says nothing, so refuse it.
+  const comment = textField(body.comment, 10000);
+  if (comment === null) return sendJSON(res, 400, { error: 'comentário vazio' });
+  if (comment === false) return sendJSON(res, 400, { error: 'comentário longo demais (máx. 10k)' });
+
+  return withFileLock(t.abs, async () => {
+    const raw = await fsp.readFile(t.abs, 'utf8');
+    const out = ann.setComment(raw, id, comment);
+    if (out.error === 'not found') return sendJSON(res, 404, { error: 'unknown annotation' });
+    if (out.error === 'not a comment') return sendJSON(res, 400, { error: 'marcações não têm comentário' });
+    if (out.error === 'unterminated') return sendJSON(res, 409, { error: 'entrada sem terminador — corrija no editor' });
+
+    await writeAtomic(t.abs, out.text, t.st.mode);
+    return sendJSON(res, 200, { mtime: await writeMtime(t.project, t.rel, t.abs) });
+  });
+}
+
 /* ---------- create ----------
  *
  * Writes a new markdown file and never touches one that already exists. For
@@ -1230,6 +1260,7 @@ const handler = async (req, res) => {
       p === '/api/annotate' ||
       p === '/api/annotate/delete' ||
       p === '/api/annotate/color' ||
+      p === '/api/annotate/edit' ||
       p === '/api/create'
     ) {
       // Writes need a trusted caller, see canWrite().
@@ -1241,6 +1272,7 @@ const handler = async (req, res) => {
       if (!isJSON(req)) return sendJSON(res, 415, { error: 'use application/json' });
       if (p === '/api/annotate') return await handleAnnotate(req, res);
       if (p === '/api/annotate/color') return await handleAnnotateColor(req, res);
+      if (p === '/api/annotate/edit') return await handleAnnotateEdit(req, res);
       if (p === '/api/create') return await handleCreate(req, res);
       return await handleAnnotateDelete(req, res);
     }

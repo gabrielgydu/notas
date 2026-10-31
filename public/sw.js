@@ -4,7 +4,7 @@
    Everything is network-first: on the tailnet the server is the source of
    truth, the cache only steps in when it's unreachable. */
 
-const VERSION = 'v13';
+const VERSION = 'v14';
 const SHELL_CACHE = `notas-shell-${VERSION}`;
 const DATA_CACHE = `notas-data-${VERSION}`;
 

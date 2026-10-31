@@ -83,6 +83,9 @@
       i++;
     }
     e.quote = quote.join('\n').replace(/\s+$/, '');
+    // Where a rewrite of the body may start cutting. With no quote, the blank
+    // lines skipped above belong to the body, not to the marker.
+    e.quoteEnd = quote.length ? i : e.startLine + 1;
     const body = lines.slice(i, last + 1);
     while (body.length && body[0].trim() === '') body.shift();
     while (body.length && body[body.length - 1].trim() === '') body.pop();
@@ -203,6 +206,8 @@
     return MARKER_RE.test(l) || TERM_RE.test(l) || HEADING_RE.test(l) ? '\\' + l : l;
   }
 
+  const bodyLines = (comment) => String(comment).replace(/\r/g, '').split('\n').map(sanitizeBodyLine);
+
   // Split out because setColor rewrites this one line and nothing else — the
   // rest of the entry has to come back byte for byte.
   function markerLine(e) {
@@ -228,8 +233,7 @@
     // parser reads the empty remainder back as an empty body, which is exactly
     // what it is.
     if (e.type === 'hl') return `${marker}\n${quote}\n<!-- /ann -->\n`;
-    const body = String(e.comment).replace(/\r/g, '').split('\n').map(sanitizeBodyLine).join('\n');
-    return `${marker}\n${quote}\n\n${body}\n<!-- /ann -->\n`;
+    return `${marker}\n${quote}\n\n${bodyLines(e.comment).join('\n')}\n<!-- /ann -->\n`;
   }
 
   // What to hand fsp.appendFile. Appending (rather than rewriting the file from
@@ -306,6 +310,26 @@
     return { text: lines.join('\n'), entry: e };
   }
 
+  /* ---------- reword ---------- */
+
+  // Replaces the comment and leaves the marker and the quote byte for byte. Like
+  // setColor, an edit is not a delete plus an append: the entry keeps its id,
+  // its date and its place in the section.
+  //
+  // Unlike setColor it needs the terminator — the body runs up to it, and an
+  // entry without one has no end that can be trusted.
+  function setComment(text, id, comment) {
+    const src = String(text == null ? '' : text);
+    const parsed = parse(src);
+    const e = parsed.entries.find((x) => x.id === id);
+    if (!e) return { error: 'not found' };
+    if (e.type === 'hl') return { error: 'not a comment' };
+    if (e.unterminated) return { error: 'unterminated' };
+    const lines = parsed.lines.slice();
+    lines.splice(e.quoteEnd, e.endLine - e.quoteEnd, '', ...bodyLines(comment));
+    return { text: lines.join('\n'), entry: e };
+  }
+
   /* ---------- ids ---------- */
 
   function newId(used) {
@@ -336,6 +360,7 @@
     composeAppend,
     removeEntry,
     setColor,
+    setComment,
     newId,
   };
 });

@@ -1081,7 +1081,7 @@ body {
 .ann-card-hl .ann-card-kind { color: var(--mk-line); }
 .ann-card-date { color: var(--muted); font-size: 10px; margin-right: auto; }
 
-.ann-card-del {
+.ann-card-btn {
   background: none;
   border: 1px solid transparent;
   border-radius: 4px;
@@ -1094,8 +1094,10 @@ body {
   opacity: 0;
   transition: opacity 0.12s ease, color 0.12s ease;
 }
-.ann-card:hover .ann-card-del,
+.ann-card:hover .ann-card-btn,
+.ann-card-btn:focus-visible,
 .ann-card-del.ann-confirm { opacity: 1; }
+.ann-card-edit:hover { color: var(--accent); border-color: var(--rule-strong); }
 .ann-card-del:hover { color: var(--hl-keyword); border-color: var(--rule-strong); }
 .ann-card-del.ann-confirm { color: var(--hl-keyword); border-color: var(--hl-keyword); }
 

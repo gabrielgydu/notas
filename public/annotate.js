@@ -10,6 +10,10 @@
    type, so it writes immediately — its popover only appears when you click one
    that already exists, to recolour or delete it.
 
+   A comment already written is reworded in the same popover: `✎` on its card,
+   or `editar` in the popover a mark opens when there is no rail. Only the
+   comment changes — the passage, id and date stay as they were.
+
    Quotes are re-found on every render by matching normalized text against the
    rendered page — the file stores the passage, not a position, so it survives
    edits above it. When it cannot be found (or found more than once with no way
@@ -37,6 +41,10 @@
     // made, and must never land on whatever file happens to be open at save time.
     project: null,
     path: null,
+    // Set while the editor is rewording an existing entry rather than writing a
+    // new one; `original` is its comment as it was when the editor opened.
+    editId: null,
+    original: '',
     // Bumped whenever an editor session ends. An in-flight save compares it and
     // gives up, so Esc during the mic's final wait really does cancel.
     session: 0,
@@ -307,12 +315,21 @@
       const date = document.createElement('span');
       date.className = 'ann-card-date';
       date.textContent = e.date;
+      top.append(kind, date);
+      if (e.type !== 'hl') {
+        const edit = document.createElement('button');
+        edit.className = 'ann-card-btn ann-card-edit';
+        edit.type = 'button';
+        edit.title = 'editar anotação';
+        edit.textContent = '✎';
+        top.appendChild(edit);
+      }
       const del = document.createElement('button');
-      del.className = 'ann-card-del';
+      del.className = 'ann-card-btn ann-card-del';
       del.type = 'button';
       del.title = 'apagar anotação';
       del.textContent = '×';
-      top.append(kind, date, del);
+      top.appendChild(del);
       el.appendChild(top);
 
       if (e.state !== 'ok') {
@@ -408,6 +425,7 @@
       '<div class="ann-pop-colors" hidden></div>' +
       '<div class="ann-pop-actions">' +
       '<button class="ann-pop-del" type="button" hidden>apagar</button>' +
+      '<button class="ann-pop-edit" type="button" hidden>editar</button>' +
       '<button class="ann-pop-cancel" type="button">cancelar</button>' +
       '<button class="ann-pop-save" type="button">salvar</button>' +
       '</div>';
@@ -420,6 +438,7 @@
       view: pop.querySelector('.ann-pop-view'),
       colors: pop.querySelector('.ann-pop-colors'),
       del: pop.querySelector('.ann-pop-del'),
+      edit: pop.querySelector('.ann-pop-edit'),
       cancel: pop.querySelector('.ann-pop-cancel'),
       save: pop.querySelector('.ann-pop-save'),
     };
@@ -443,23 +462,42 @@
     ui.del.addEventListener('click', () => {
       if (st.viewId) confirmDelete(st.viewId, ui.del);
     });
+    ui.edit.addEventListener('click', () => {
+      if (st.viewId) openEdit(st.viewId);
+    });
     ui.text.addEventListener('input', () => {
       if (mic.state === 'off') mic.committed = ui.text.value;
     });
   }
 
-  function placePopover(rect) {
+  // A comment being reworded can be longer than the three rows a new one starts
+  // with; showing all of it, up to a point, beats a scrollbar in a small box.
+  // Needs the popover laid out (hidden by visibility, not display) to measure.
+  function fitText() {
+    const t = ui.text;
+    t.style.height = '';
+    if (t.hidden || t.scrollHeight <= t.clientHeight) return;
+    const borders = t.offsetHeight - t.clientHeight; // border-box: height includes them
+    t.style.height = `${Math.min(t.scrollHeight + borders, Math.round(window.innerHeight * 0.45))}px`;
+  }
+
+  // `over` lays the popover on top of `rect` instead of under it — the editor
+  // opened from a card takes that card's place.
+  function placePopover(rect, over) {
     const margin = 10;
     pop.hidden = false;
     pop.style.visibility = 'hidden';
     pop.style.left = '0px';
     pop.style.top = '0px';
+    fitText();
     const w = pop.offsetWidth;
     const h = pop.offsetHeight;
     let left = Math.min(rect.left, window.innerWidth - w - margin);
     left = Math.max(margin, left);
-    let top = rect.bottom + 8;
-    if (top + h > window.innerHeight - margin) top = Math.max(margin, rect.top - h - 8);
+    let top = over ? rect.top : rect.bottom + 8;
+    if (top + h > window.innerHeight - margin) {
+      top = Math.max(margin, over ? window.innerHeight - margin - h : rect.top - h - 8);
+    }
     pop.style.left = `${Math.round(left)}px`;
     pop.style.top = `${Math.round(top)}px`;
     pop.style.visibility = '';
@@ -476,6 +514,8 @@
     st.ctx = null;
     st.project = null;
     st.path = null;
+    st.editId = null;
+    st.original = '';
     st.viewId = null;
     resetConfirm();
   }
@@ -704,6 +744,32 @@
 
   /* ---------- editor ---------- */
 
+  // The popover as an editor, whether the comment is new or being reworded.
+  // Answers whether dictation is available.
+  function showEditor(type, text) {
+    ui.kind.textContent = KIND[type] || type;
+    ui.kind.className = `ann-pop-kind ann-kind-${type}`;
+    ui.text.hidden = false;
+    ui.text.value = text;
+    ui.view.hidden = true;
+    ui.colors.hidden = true;
+    ui.del.hidden = true;
+    ui.edit.hidden = true;
+    ui.save.hidden = false;
+    ui.save.disabled = false;
+    ui.cancel.textContent = 'cancelar';
+    mic.committed = text;
+    mic.live = '';
+    mic.state = 'off';
+
+    const D = window.NotasDictation;
+    const canDictate = Boolean(D && D.available());
+    ui.mic.hidden = !canDictate;
+    micButton('● ditar');
+    micStatus(canDictate ? '' : 'ditado indisponível — digite');
+    return canDictate;
+  }
+
   function openEditor(type, sel) {
     const md = mdRoot();
     if (!md) return;
@@ -716,36 +782,62 @@
     st.quote = sel.text;
     st.project = state.current;
     st.path = state.file.path;
+    st.editId = null;
+    st.original = '';
     st.session++;
     markPending(sel.range);
     window.getSelection().removeAllRanges();
 
-    ui.kind.textContent = type === 'claude' ? 'claude' : 'nota';
-    ui.kind.className = `ann-pop-kind ann-kind-${type}`;
-    ui.text.hidden = false;
-    ui.text.value = '';
-    ui.view.hidden = true;
-    ui.colors.hidden = true;
-    ui.del.hidden = true;
-    ui.save.hidden = false;
-    ui.save.disabled = false;
-    ui.cancel.textContent = 'cancelar';
-    mic.committed = '';
-    mic.live = '';
-    mic.state = 'off';
-
-    const D = window.NotasDictation;
-    const canDictate = Boolean(D && D.available());
-    ui.mic.hidden = !canDictate;
-    micButton('● ditar');
-    micStatus(canDictate ? '' : 'ditado indisponível — digite');
-
+    const canDictate = showEditor(type, '');
     placePopover(sel.rect);
     ui.text.focus();
     if (canDictate) micStart();
   }
 
   const FALLBACK_RECT = { left: 16, top: 80, bottom: 88 };
+
+  // An editor holding something unsaved: a new comment with any text in it, or
+  // a rewording that has drifted from the original. Opening another editor over
+  // it would throw that away without a word.
+  const editorBusy = () =>
+    Boolean(pop) && !pop.hidden && st.mode === 'editor' &&
+    ui.text.value.trim() !== st.original.trim();
+
+  // Unlike a new comment, the mic waits to be asked: the text is already there,
+  // and the likely job is fixing a word of it, not saying more. The passage is
+  // already marked, so nothing is pended either — a flash says which one it is.
+  function openEdit(id, rect, over) {
+    const e = entryOf(id);
+    if (!e || e.type === 'hl' || !state.file) return;
+    if (pop && !pop.hidden && st.mode === 'editor' && st.editId === id) {
+      ui.text.focus();
+      return;
+    }
+    if (editorBusy()) {
+      ui.text.focus();
+      toast('termine ou cancele a anotação aberta');
+      return;
+    }
+    if (!rect) {
+      const m = marksOf(id)[0];
+      rect = m ? m.getBoundingClientRect() : FALLBACK_RECT;
+    }
+    closePopover(); // whatever was open — a view, a highlight, an untouched editor
+    ensurePopover();
+    st.mode = 'editor';
+    st.type = e.type;
+    st.editId = id;
+    st.original = e.body;
+    st.project = state.current;
+    st.path = state.file.path;
+    st.session++;
+
+    showEditor(e.type, e.body);
+    placePopover(rect, over);
+    ui.text.focus();
+    ui.text.setSelectionRange(ui.text.value.length, ui.text.value.length);
+    flash(marksOf(id));
+  }
 
   function openView(id) {
     const e = entryOf(id);
@@ -766,6 +858,7 @@
     ui.del.hidden = false;
     ui.del.textContent = 'apagar';
     ui.del.classList.remove('ann-confirm');
+    ui.edit.hidden = false;
     ui.save.hidden = true;
     ui.cancel.textContent = 'fechar';
     const m = marksOf(id)[0];
@@ -796,6 +889,7 @@
     ui.del.hidden = false;
     ui.del.textContent = 'apagar';
     ui.del.classList.remove('ann-confirm');
+    ui.edit.hidden = true;
     ui.save.hidden = true;
     ui.cancel.textContent = 'fechar';
     const m = marksOf(id)[0];
@@ -839,12 +933,29 @@
     const kind = st.type;
     const quote = st.quote;
     const ctx = st.ctx;
+    const editId = st.editId;
+    const original = st.original;
     try {
       await micStopForSave();
       // Esc (or anything else that closed the editor) during the mic's final
       // wait means cancelled — the placeholder promises "esc cancela".
       if (session !== st.session) return;
       const comment = ui.text.value.trim();
+      if (editId) {
+        // Emptied is not deleted: that is `apagar`, which asks first. The
+        // editor stays open so nothing typed is lost to a slip.
+        if (!comment) {
+          toast('comentário vazio — para remover, use apagar');
+          return;
+        }
+        if (comment === original.trim()) {
+          closePopover();
+          return;
+        }
+        const req = apiPost('/api/annotate/edit', { project, path: relPath, id: editId, comment });
+        await commit(project, relPath, req, kind === 'claude' ? 'instrução alterada' : 'nota alterada');
+        return;
+      }
       // Nothing said, nothing typed — write nothing, say nothing.
       if (!comment || !relPath) {
         closePopover();
@@ -1118,6 +1229,10 @@
       const id = card.dataset.annId;
       if (e.target.closest('.ann-card-del')) {
         confirmDelete(id, e.target.closest('.ann-card-del'));
+        return;
+      }
+      if (e.target.closest('.ann-card-edit')) {
+        openEdit(id, card.getBoundingClientRect(), true);
         return;
       }
       const marks = marksOf(id);

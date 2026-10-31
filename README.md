@@ -155,6 +155,16 @@ selection is what it acts on. `Esc` cancels at any point.
 `n` and `c` open a comment popover: `Enter` saves, and an empty comment writes
 nothing at all. Comments can be typed or dictated (see below).
 
+To reword a comment already written, click `✎` on its card in the rail (it shows on hover, next to `×`), or `editar` in the popover a mark opens when the window is too narrow for the rail.
+
+The same editor opens over the card, filled with the current text. `Enter` saves, `Esc` cancels, and saving unchanged text writes nothing.
+
+The mic does not start on its own here: the text is already there, and `● ditar` adds to it.
+
+Emptying the field does not delete the annotation — it is refused, and `apagar` is the way to remove one.
+
+Only the comment changes. The quoted passage, the id and the date stay as they were.
+
 ### Marcas (highlighting)
 
 `h` writes immediately — there is nothing to type, so the key press is the whole interaction.
@@ -224,6 +234,10 @@ written only when the quoted text appears more than once, to say *which* one.
 
 Recolouring rewrites the marker line and nothing else — it is not a delete plus an append, so the entry keeps its id and its place in the section.
 
+Rewording a comment works the same way: it replaces the lines between the quote and `<!-- /ann -->`, and every other byte of the file comes back as it was.
+
+An entry without its terminator is refused for this too (409), since its body has no end that can be trusted.
+
 When a quote no longer matches, the card says `trecho não encontrado`; when it
 matches several times with no way to tell them apart, `trecho ambíguo`. Neither
 highlights anything — a highlight on the wrong passage is worse than none.
@@ -236,11 +250,11 @@ but refused for deletion (409) rather than risk excising the wrong span.
 
 The marks themselves render at every width. The margin rail (left, opposite the ToC) appears only at ≥ 1180 px.
 
-Below that, clicking a `nota`/`claude` mark opens a popover with the comment and a delete button — and a lost entry, which exists only as a card, is out of reach until the window is wide enough again.
+Below that, clicking a `nota`/`claude` mark opens a popover with the comment, an edit button and a delete button — and a lost entry, which exists only as a card, is out of reach until the window is wide enough again.
 
 Clicking a `marca` always opens its own popover, rail or no rail.
 
-Writes need a trusted caller: `/api/annotate`, `/api/annotate/delete`, `/api/annotate/color`, `/api/create` and the dictation socket `/api/dictate` accept a direct localhost request, or a tailnet request whose Tailscale login is listed in `NOTAS_WRITERS`.
+Writes need a trusted caller: `/api/annotate`, `/api/annotate/delete`, `/api/annotate/color`, `/api/annotate/edit`, `/api/create` and the dictation socket `/api/dictate` accept a direct localhost request, or a tailnet request whose Tailscale login is listed in `NOTAS_WRITERS`.
 
 `tailscale serve` sets `X-Forwarded-For` on everything it proxies, which a direct localhost request never carries.
 
