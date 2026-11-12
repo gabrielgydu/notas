@@ -5,11 +5,10 @@
    file. A *claude* entry is an instruction a later Claude session applies to
    the quoted passage and then removes.
 
-   `h` or `g` (or `1`–`4` for a colour) marks the selection at once, then opens
-   the mark's popover: swatches, the comment box (not focused, so the number
-   keys still recolour) and `apagar`. `n` or `b` is the same mark with the box
-   focused first, and nothing is written until it is saved. `c` opens the
-   claude editor. Any of them with text selected acts on it; without a
+   `h` or `g` (or `1`–`4` for a colour) marks the selection at once and opens
+   nothing. `n` or `b` opens the mark's popover — swatches, the comment box
+   (focused) and `apagar` — and nothing is written until it is saved. `c` opens
+   the claude editor. Any of them with text selected acts on it; without a
    selection the key arms the page and the next selection is what it acts on.
 
    Clicking a mark opens that same popover, which is how a comment is added to
@@ -1096,9 +1095,8 @@
     return e && Ann.normalize(e.quote) === Ann.normalize(sel.text) ? e : null;
   }
 
-  // There is nothing to type first, so the key press writes the mark at once.
-  // Its popover opens afterwards, box unfocused: ignore it and it goes at the
-  // next click; tap the box and it becomes the mark's comment.
+  // There is nothing to type first, so the key press writes the mark at once,
+  // and nothing opens: a comment is added by clicking the mark afterwards.
   async function saveHighlight(sel, color) {
     const md = mdRoot();
     if (!md || !state.file || st.saving) return;
@@ -1121,17 +1119,13 @@
     }
     window.getSelection().removeAllRanges();
     st.saving = true;
-    let made = null;
     try {
-      made = await commit(project, relPath, apiPost('/api/annotate', body), 'trecho marcado');
+      await commit(project, relPath, apiPost('/api/annotate', body), 'trecho marcado');
     } catch (err) {
       toast(err && err.message ? err.message : 'erro ao marcar');
     } finally {
       st.saving = false;
     }
-    // stillOn as well as entryOf: the reader may have left mid-request, and a
-    // matching id in whatever file is open now is a coincidence, not this one.
-    if (made && made.id && stillOn(project, relPath) && entryOf(made.id)) openMark(made.id);
   }
 
   // The popover stays put and only its swatches and label are repainted, so a

@@ -163,21 +163,21 @@ Pressing the key without a selection arms the page (crosshair cursor); the next 
 
 ### Marks
 
-`h`, `g` and `1`–`4` write the mark at once, then open its popover: the four swatches, a comment box, and `apagar`.
+`h`, `g` and `1`–`4` write the mark at once and open nothing.
 
-The box is not focused, so `1`–`4` keep recolouring, and `Esc` or a click anywhere else closes the popover with nothing more written.
+Click the mark to open its popover: the four swatches, a comment box, and `apagar`.
+
+The box is not focused, so `1`–`4` recolour, and `Esc` or a click anywhere else closes the popover with nothing more written.
 
 Click the box and type, and the comment saves with `Enter` or `salvar`.
 
-`n` and `b` open the same popover with the box focused and the mic on, but write nothing until it is saved: an empty comment writes nothing at all.
+`n` and `b` open that popover with the box focused and the mic on, but write nothing until it is saved: an empty comment writes nothing at all.
 
 A swatch there picks the colour the save will use.
 
 On a passage that is already marked, `n` opens that mark's popover instead of nesting a second mark inside it, and `h`/`1`–`4` recolour it in place: same entry, same id.
 
-Click any mark to open its popover again.
-
-That is where a comment is added to a highlight later, reworded, or emptied.
+Clicking a mark is where a comment is added to a highlight later, reworded, or emptied.
 
 Emptying the box removes the comment and leaves the highlight.
 
@@ -219,7 +219,7 @@ The quoted passage, the id and the date stay as they were.
 
 There are no keys to press, so a selection made with a finger brings up a bar along the bottom of the screen: `nota`, `claude`, and the four colours.
 
-A swatch marks the passage like `1`–`4`, and the mark's popover opens with the box unfocused, so the keyboard stays down until you tap it.
+A swatch marks the passage like `1`–`4` and opens nothing; tap the mark to comment on it or change its colour.
 
 `nota` and `claude` work like `n` and `c`.
 
