@@ -82,9 +82,7 @@ On phones (≤ 900 px) the sidebar becomes a drawer behind the ☰ button.
 - Search: `/` focuses the box, Enter searches the current project (server-side grep).
 - Dark/light: follows the OS, toggle bottom-left, persisted.
 - "copiar caminho" button copies the absolute file path.
-- Anotações: select a passage, `n` or `b` for a note or `c` for a Claude instruction —
-  typed or dictated, stored in the `.md` itself. `h` or `g` (or `1`–`4`) highlights it
-  in one of four colours, no comment. See below.
+- Anotações: select a passage and `h`/`g` (or `1`–`4`) marks it in one of four colours, with an optional comment; `n`/`b` is the same with the comment box focused first, `c` an instruction for Claude. Typed or dictated, stored in the `.md` itself. See below.
 
 ## PDFs
 
@@ -142,56 +140,96 @@ Full syntax, config and hard rules live in mdt's own documentation.
 
 ## Anotações
 
-Select text in the rendered page and press a key — the comment is written into the
-`.md` file itself, not into a sidecar database.
+Select text in the rendered page and press a key — the annotation is written into the `.md` file itself, not into a sidecar database.
 
-- `n` or `b` — **nota**: a note to self. It stays in the file.
-- `c` — **claude**: an instruction for a later Claude session.
-- `h` or `g` — **marca**: a highlighter. No comment at all.
+There are two kinds:
 
-Pressing the key without a selection arms the page (crosshair cursor); the next
-selection is what it acts on. `Esc` cancels at any point.
+- **marca** — the passage in one of four colours, with a comment when you write one.
 
-`n`, `b` and `c` open a comment popover: `Enter` saves, and an empty comment writes
-nothing at all. Comments can be typed or dictated (see below).
+  It stays in the file.
+- **claude** — an instruction for a later Claude session, which applies it and removes it.
 
-To reword a comment already written, click `✎` on its card in the rail (it shows on hover, next to `×`), or `editar` in the popover a mark opens when the window is too narrow for the rail.
+The keys:
 
-The same editor opens over the card, filled with the current text. `Enter` saves, `Esc` cancels, and saving unchanged text writes nothing.
+- `h` or `g` — mark the passage (yellow).
+
+  `1`–`4` mark it in a colour: **yellow**, **green**, **blue**, **pink**.
+- `n` or `b` — a mark with a comment: the comment box opens focused, green by default.
+- `c` — a claude instruction.
+
+Pressing the key without a selection arms the page (crosshair cursor); the next selection is what it acts on.
+
+`Esc` cancels at any point.
+
+### Marks
+
+`h`, `g` and `1`–`4` write the mark at once, then open its popover: the four swatches, a comment box, and `apagar`.
+
+The box is not focused, so `1`–`4` keep recolouring, and `Esc` or a click anywhere else closes the popover with nothing more written.
+
+Click the box and type, and the comment saves with `Enter` or `salvar`.
+
+`n` and `b` open the same popover with the box focused and the mic on, but write nothing until it is saved: an empty comment writes nothing at all.
+
+A swatch there picks the colour the save will use.
+
+On a passage that is already marked, `n` opens that mark's popover instead of nesting a second mark inside it, and `h`/`1`–`4` recolour it in place: same entry, same id.
+
+Click any mark to open its popover again.
+
+That is where a comment is added to a highlight later, reworded, or emptied.
+
+Emptying the box removes the comment and leaves the highlight.
+
+`apagar` removes the mark altogether, and asks first.
+
+While something typed in the box is unsaved, a click elsewhere leaves the popover open; `fechar` or `Esc` discards it.
+
+A mark with a comment is underlined in its own colour, so you can tell which ones have something to read.
+
+It gets a card in the rail too (`✎` on the card opens the popover with the box focused).
+
+A mark without a comment gets no card, because there would be nothing on it, unless its quote stopped matching: then the card shows the passage it lost, so there is still something to delete.
+
+A claude instruction and a mark can cover the same passage — the marks nest and both tints show.
+
+Clicking lands on the innermost one.
+
+### Claude instructions
+
+`c` opens a comment popover: `Enter` saves, and an empty instruction writes nothing at all.
+
+Instructions can be typed or dictated (see below).
+
+To reword one, click `✎` on its card in the rail (it shows on hover, next to `×`), or `editar` in the popover its mark opens when the window is too narrow for the rail.
+
+The same editor opens over the card, filled with the current text.
+
+`Enter` saves, `Esc` cancels, and saving unchanged text writes nothing.
 
 The mic does not start on its own here: the text is already there, and `● ditar` adds to it.
 
-Emptying the field does not delete the annotation — it is refused, and `apagar` is the way to remove one.
+Emptying the field does not delete the instruction — it is refused, and `apagar` is the way to remove one.
 
-Only the comment changes. The quoted passage, the id and the date stay as they were.
+Only the comment changes.
+
+The quoted passage, the id and the date stay as they were.
 
 ### On a phone
 
-There are no keys to press, so a selection made with a finger brings up a bar along the bottom of the screen: `nota`, `claude`, and the four highlight colours.
+There are no keys to press, so a selection made with a finger brings up a bar along the bottom of the screen: `nota`, `claude`, and the four colours.
 
-`nota` and `claude` open the same comment popover as `n` and `c`; a swatch highlights in that colour, like `1`–`4`.
+A swatch marks the passage like `1`–`4`, and the mark's popover opens with the box unfocused, so the keyboard stays down until you tap it.
+
+`nota` and `claude` work like `n` and `c`.
 
 The bar sits at the bottom rather than beside the passage because iOS draws its own copy/look-up menu next to the selection, and a page can neither move nor extend that one.
 
 It never appears for a mouse selection: on a desktop the keys are the interface.
 
-When the keyboard comes up, the comment popover moves into the part of the screen the keyboard leaves visible.
+When the keyboard comes up, the popover moves into the part of the screen the keyboard leaves visible.
 
-Tapping a mark works like clicking one: a highlight opens its colour popover, a `nota` or `claude` mark opens its comment with `editar` and `apagar`.
-
-### Marcas (highlighting)
-
-`h` and `g` write immediately — there is nothing to type, so the key press is the whole interaction.
-
-`1`–`4` pick the colour directly: **yellow** (what `h` and `g` use), **green**, **blue**, **pink**.
-
-Click a highlight to recolour or remove it: the popover is four swatches and an `apagar` button, and `1`–`4` work there too.
-
-Marking a passage that is already marked recolours it in place rather than nesting a second one — same entry, same id.
-
-Highlights get no card in the rail, because there would be nothing on it. A highlight whose quote stopped matching gets one, showing the passage it lost, so there is still something to delete.
-
-A highlight and a comment can cover the same passage — the marks nest and both tints show. Clicking lands on the innermost one.
+Tapping a mark works like clicking one.
 
 ### The convention
 
@@ -200,7 +238,15 @@ reading the file applies each one to the quoted passage and then *removes that
 entry* — and removes the `## Annotations` section when the last one goes. That is
 the whole point: the file carries its own revision requests.
 
-**`ann:note` and `ann:hl` entries stay.** Nothing removes them but you.
+**`ann:hl` entries stay.** Nothing removes them but you.
+
+Their comment, when there is one, is your own note on the passage.
+
+**`ann:note` is the old way a comment was stored**, before a mark could carry one.
+
+Old entries keep working: they show as green marks with their comment.
+
+The first recolour or edit rewrites the marker as `ann:hl` (body untouched), and nothing writes a new `ann:note`.
 
 ### Storage
 
@@ -209,7 +255,7 @@ Everything is appended to the end of the file, under one `## Annotations` headin
 ```markdown
 ## Annotations
 
-<!-- ann:note id=k3f9 2026-08-10 -->
+<!-- ann:hl id=k3f9 2026-08-10 color="green" -->
 > the text you selected as a quote
 > second line of a multi-line selection
 
@@ -240,7 +286,11 @@ Its own heading is the lever — click it, or Enter/Space it, and the count besi
 
 It stays open while the file re-renders under it (a save, the 2 s autoreload), and folds again for the next file.
 
-A highlight is the quote and nothing else: no blank line, no body. Yellow is never written out, so a bare `ann:hl` marker *is* a yellow highlight.
+A mark without a comment is the quote and nothing else: no blank line, no body.
+
+With one, a blank line and the comment follow the quote, as in a claude entry.
+
+Yellow is never written out, so a bare `ann:hl` marker *is* a yellow highlight.
 
 The quote is what re-finds the passage on every render: nothing stores a position,
 so text you add above it does not break the link. `before`/`after` (≤ 32 chars) are
@@ -249,6 +299,8 @@ written only when the quoted text appears more than once, to say *which* one.
 Recolouring rewrites the marker line and nothing else — it is not a delete plus an append, so the entry keeps its id and its place in the section.
 
 Rewording a comment works the same way: it replaces the lines between the quote and `<!-- /ann -->`, and every other byte of the file comes back as it was.
+
+Emptying a mark's comment removes those lines and leaves the bare form above.
 
 An entry without its terminator is refused for this too (409), since its body has no end that can be trusted.
 
@@ -264,9 +316,9 @@ but refused for deletion (409) rather than risk excising the wrong span.
 
 The marks themselves render at every width. The margin rail (left, opposite the ToC) appears only at ≥ 1180 px.
 
-Below that, clicking a `nota`/`claude` mark opens a popover with the comment, an edit button and a delete button — and a lost entry, which exists only as a card, is out of reach until the window is wide enough again.
+Clicking a mark always opens its popover, rail or no rail.
 
-Clicking a `marca` always opens its own popover, rail or no rail.
+Below that width, clicking a `claude` mark opens a popover with the instruction, an edit button and a delete button — and a lost entry, which exists only as a card, is out of reach until the window is wide enough again.
 
 Writes need a trusted caller: `/api/annotate`, `/api/annotate/delete`, `/api/annotate/color`, `/api/annotate/edit`, `/api/create` and the dictation socket `/api/dictate` accept a direct localhost request, or a tailnet request whose Tailscale login is listed in `NOTAS_WRITERS`.
 

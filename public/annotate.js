@@ -1,17 +1,23 @@
 /* Notas — annotations UI.
 
-   `n` or `b` = nota (stays in the file), `c` = claude (an instruction a later
-   Claude session applies to the quoted passage and then removes), `h` or `g` =
-   marca (a highlighter, no comment at all; `1`–`4` pick the colour directly).
-   Any of them with text selected acts on it; without a selection the key arms
-   the page and the next selection is what it acts on.
+   There are two kinds of annotation. A *mark* is a passage in one of four
+   colours, with a comment when something was written about it; it stays in the
+   file. A *claude* entry is an instruction a later Claude session applies to
+   the quoted passage and then removes.
 
-   The two comment kinds open a popover to type in. A highlight has nothing to
-   type, so it writes immediately — its popover only appears when you click one
-   that already exists, to recolour or delete it.
+   `h` or `g` (or `1`–`4` for a colour) marks the selection at once, then opens
+   the mark's popover: swatches, the comment box (not focused, so the number
+   keys still recolour) and `apagar`. `n` or `b` is the same mark with the box
+   focused first, and nothing is written until it is saved. `c` opens the
+   claude editor. Any of them with text selected acts on it; without a
+   selection the key arms the page and the next selection is what it acts on.
 
-   A comment already written is reworded in the same popover: `✎` on its card,
-   or `editar` in the popover a mark opens when there is no rail. Only the
+   Clicking a mark opens that same popover, which is how a comment is added to
+   a highlight later, or reworded, or emptied (the mark stays). `ann:note` is
+   the old way a comment was stored, and reads as a green mark.
+
+   A claude instruction is reworded in its editor: `✎` on its card, or
+   `editar` in the popover its mark opens when there is no rail. Only the
    comment changes — the passage, id and date stay as they were.
 
    A phone has no keys to press: a selection made with a finger brings up a bar
@@ -34,9 +40,9 @@
   const rail = document.getElementById('ann-rail');
 
   const st = {
-    mode: 'idle', // idle | armed | editor | view | hl
+    mode: 'idle', // idle | armed | editor | view | mark
     type: null,
-    color: null, // only meaningful while type === 'hl'
+    color: null, // the colour a highlight is armed with, or a new note will be saved in
     quote: '',
     ctx: null,
     // The file the passage came from, pinned when the editor opens. The reader
@@ -73,7 +79,8 @@
   const elemOf = (n) => (n && n.nodeType === 1 ? n : n && n.parentElement);
   const railVisible = () => rail && !rail.hidden && getComputedStyle(rail).display !== 'none';
   const entryOf = (id) => st.entries.find((e) => e.id === id) || null;
-  const colorOf = (e) => Ann.normColor(e && e.attrs && e.attrs.color);
+  const colorOf = (e) => Ann.entryColor(e);
+  const isMark = (e) => Ann.isMark(e);
 
   /* ---------- text index over the rendered page ----------
      A raw string of every text node we are allowed to match in, plus the maps
@@ -275,10 +282,11 @@
         e.state = 'ambiguous';
         continue;
       }
-      // A highlight and a note can cover the same passage; the second wrap
-      // simply nests inside the first, and `closest` resolves clicks inward.
-      const cls =
-        e.type === 'hl' ? `ann ann-hl ann-c-${colorOf(e)}` : `ann ann-${e.type}`;
+      // A mark and a claude instruction can cover the same passage; the second
+      // wrap simply nests inside the first, and `closest` resolves clicks inward.
+      const cls = isMark(e)
+        ? `ann ann-hl ann-c-${colorOf(e)}${e.body ? ' ann-has-note' : ''}`
+        : `ann ann-${e.type}`;
       const marks = wrapRange(md, index.map[at], index.map[at + q.length - 1] + 1, cls, e.id);
       if (marks.length) e.state = 'ok';
     }
@@ -289,10 +297,14 @@
   const LOST = { orphan: 'trecho não encontrado', ambiguous: 'trecho ambíguo' };
   const KIND = { note: 'nota', claude: 'claude', hl: 'marca' };
 
-  // An anchored highlight carries no comment, so a card would be an empty box
-  // next to a mark that already says everything. A *lost* one is the opposite
-  // case: the card is the only handle left on it, so it has to be there.
-  const railWorthy = (e) => e.type !== 'hl' || e.state !== 'ok';
+  // What the reader sees on a mark's card or popover: `nota` once something is
+  // written about it, `marca` while it is only a colour.
+  const kindOf = (e) => (isMark(e) ? (e.body ? KIND.note : KIND.hl) : KIND[e.type] || e.type);
+
+  // A mark with no comment would be an empty card next to a highlight that
+  // already says everything. A *lost* one is the opposite case: the card is the
+  // only handle left on it, so it has to be there.
+  const railWorthy = (e) => !isMark(e) || Boolean(e.body) || e.state !== 'ok';
 
   function renderRail(all) {
     st.cards = [];
@@ -306,27 +318,28 @@
     }
     for (const e of entries) {
       const el = document.createElement('div');
-      el.className = `ann-card ann-card-${e.type}${e.state === 'ok' ? '' : ' ann-card-lost'}`;
-      if (e.type === 'hl') el.classList.add(`ann-c-${colorOf(e)}`);
+      const mark = isMark(e);
+      el.className = `ann-card ann-card-${mark ? 'hl' : e.type}${e.state === 'ok' ? '' : ' ann-card-lost'}`;
+      if (mark) el.classList.add(`ann-c-${colorOf(e)}`);
       el.dataset.annId = e.id;
 
       const top = document.createElement('div');
       top.className = 'ann-card-top';
       const kind = document.createElement('span');
       kind.className = 'ann-card-kind';
-      kind.textContent = KIND[e.type] || e.type;
+      kind.textContent = kindOf(e);
       const date = document.createElement('span');
       date.className = 'ann-card-date';
       date.textContent = e.date;
       top.append(kind, date);
-      if (e.type !== 'hl') {
-        const edit = document.createElement('button');
-        edit.className = 'ann-card-btn ann-card-edit';
-        edit.type = 'button';
-        edit.title = 'editar anotação';
-        edit.textContent = '✎';
-        top.appendChild(edit);
-      }
+      // Every card, a lost bare highlight's included: any mark can be given a
+      // comment, and this is the only handle on one that lost its passage.
+      const edit = document.createElement('button');
+      edit.className = 'ann-card-btn ann-card-edit';
+      edit.type = 'button';
+      edit.title = 'editar anotação';
+      edit.textContent = '✎';
+      top.appendChild(edit);
       const del = document.createElement('button');
       del.className = 'ann-card-btn ann-card-del';
       del.type = 'button';
@@ -343,9 +356,9 @@
       }
 
       const body = document.createElement('div');
-      // A highlight has no comment of its own, so the card shows the passage
-      // it lost — that is what you need to find it again in the file.
-      const isQuote = e.type === 'hl';
+      // A mark with no comment has nothing of its own to show, so the card shows
+      // the passage it lost — that is what you need to find it again.
+      const isQuote = !e.body;
       body.className = `ann-card-body${isQuote ? ' ann-card-quote' : ''}`;
       body.textContent = isQuote ? e.quote : e.body;
       el.appendChild(body);
@@ -422,10 +435,9 @@
       '<button class="ann-pop-mic" type="button" hidden>&#9679; ditar</button>' +
       '<span class="ann-pop-status"></span>' +
       '</div>' +
-      '<textarea class="ann-pop-text" rows="3" spellcheck="false" ' +
-      'placeholder="comentário&hellip;  ( enter salva &middot; esc cancela )"></textarea>' +
-      '<div class="ann-pop-view" hidden></div>' +
       '<div class="ann-pop-colors" hidden></div>' +
+      '<textarea class="ann-pop-text" rows="3" spellcheck="false"></textarea>' +
+      '<div class="ann-pop-view" hidden></div>' +
       '<div class="ann-pop-actions">' +
       '<button class="ann-pop-del" type="button" hidden>apagar</button>' +
       '<button class="ann-pop-edit" type="button" hidden>editar</button>' +
@@ -455,9 +467,18 @@
       b.title = `${c}  ( ${i + 1} )`;
       ui.colors.appendChild(b);
     });
+    // On a mark that exists, a swatch is a write. On a note still being typed
+    // it only picks the colour the save will use.
     ui.colors.addEventListener('click', (e) => {
       const b = e.target.closest('.ann-swatch');
-      if (b && st.viewId) recolor(st.viewId, b.dataset.color);
+      if (!b) return;
+      if (st.mode === 'mark' && st.viewId) {
+        recolor(st.viewId, b.dataset.color);
+      } else if (st.mode === 'editor' && st.type === 'note') {
+        st.color = b.dataset.color;
+        paintSwatches(st.color, KIND.note);
+        ui.text.focus();
+      }
     });
     ui.save.addEventListener('click', save);
     ui.cancel.addEventListener('click', () => closePopover());
@@ -770,15 +791,27 @@
 
   /* ---------- editor ---------- */
 
-  // The popover as an editor, whether the comment is new or being reworded.
-  // Answers whether dictation is available.
+  // The kind label takes the colour, and the ring marks the swatch that has it.
+  function paintSwatches(color, label) {
+    ui.kind.textContent = label;
+    ui.kind.className = `ann-pop-kind ann-kind-hl ann-c-${color}`;
+    for (const b of ui.colors.children) {
+      b.classList.toggle('is-on', b.dataset.color === color);
+    }
+  }
+
+  // The popover as an editor: a new note or claude instruction, or a claude
+  // instruction being reworded. Answers whether dictation is available.
   function showEditor(type, text) {
     ui.kind.textContent = KIND[type] || type;
     ui.kind.className = `ann-pop-kind ann-kind-${type}`;
     ui.text.hidden = false;
     ui.text.value = text;
+    ui.text.placeholder = 'comentário…  ( enter salva · esc cancela )';
     ui.view.hidden = true;
-    ui.colors.hidden = true;
+    // A new note is a mark being made, so its colour can be picked first.
+    ui.colors.hidden = type !== 'note';
+    if (type === 'note') paintSwatches(st.color, KIND.note);
     ui.del.hidden = true;
     ui.edit.hidden = true;
     ui.save.hidden = false;
@@ -805,6 +838,7 @@
     st.ctx = captureContext(index, sel);
     st.mode = 'editor';
     st.type = type;
+    st.color = type === 'note' ? Ann.NOTE_COLOR : null;
     st.quote = sel.text;
     st.project = state.current;
     st.path = state.file.path;
@@ -822,11 +856,11 @@
 
   const FALLBACK_RECT = { left: 16, top: 80, bottom: 88 };
 
-  // An editor holding something unsaved: a new comment with any text in it, or
-  // a rewording that has drifted from the original. Opening another editor over
-  // it would throw that away without a word.
+  // A popover holding something unsaved: a new comment with any text in it, or
+  // a comment that has drifted from what the file says. Opening another one
+  // over it would throw that away without a word.
   const editorBusy = () =>
-    Boolean(pop) && !pop.hidden && st.mode === 'editor' &&
+    Boolean(pop) && !pop.hidden && (st.mode === 'editor' || st.mode === 'mark') &&
     ui.text.value.trim() !== st.original.trim();
 
   // Unlike a new comment, the mic waits to be asked: the text is already there,
@@ -834,7 +868,11 @@
   // already marked, so nothing is pended either — a flash says which one it is.
   function openEdit(id, rect, over) {
     const e = entryOf(id);
-    if (!e || e.type === 'hl' || !state.file) return;
+    if (!e || !state.file) return;
+    if (isMark(e)) {
+      openMark(id, { rect, over, focus: true });
+      return;
+    }
     if (pop && !pop.hidden && st.mode === 'editor' && st.editId === id) {
       ui.text.focus();
       return;
@@ -891,35 +929,67 @@
     placePopover(m ? m.getBoundingClientRect() : FALLBACK_RECT);
   }
 
-  // A highlight has no text to show, so its popover is the two things you can
-  // still do to one: change the colour, or take it off.
-  function openHl(id) {
+  // The one popover a mark has, comment or not: its colour, its comment, and
+  // `apagar`. The box is focused only when asked (`✎`, `n` on a marked
+  // passage): otherwise `1`–`4` keep recolouring, and on a phone the keyboard
+  // stays down until the box is tapped. An emptied box saves as a plain
+  // highlight — the mark stays, only what was written about it goes.
+  function openMark(id, opts = {}) {
     const e = entryOf(id);
-    if (!e) return;
-    ensurePopover();
-    micTeardown();
-    st.mode = 'hl';
-    st.viewId = id;
-    const color = colorOf(e);
-    ui.kind.textContent = KIND.hl;
-    ui.kind.className = `ann-pop-kind ann-kind-hl ann-c-${color}`;
-    ui.mic.hidden = true;
-    micStatus(e.date);
-    ui.text.hidden = true;
-    ui.view.hidden = true;
-    ui.colors.hidden = false;
-    for (const b of ui.colors.children) {
-      b.classList.toggle('is-on', b.dataset.color === color);
+    if (!e || !isMark(e) || !state.file) return;
+    if (pop && !pop.hidden && st.mode === 'mark' && st.viewId === id) {
+      if (opts.focus) ui.text.focus();
+      return;
     }
+    if (editorBusy()) {
+      ui.text.focus();
+      toast('termine ou cancele a anotação aberta');
+      return;
+    }
+    let rect = opts.rect;
+    if (!rect) {
+      const m = marksOf(id)[0];
+      rect = m ? m.getBoundingClientRect() : FALLBACK_RECT;
+    }
+    closePopover(); // whatever was open — a view, an untouched editor
+    ensurePopover();
+    st.mode = 'mark';
+    st.type = e.type;
+    st.viewId = id;
+    st.editId = id;
+    st.original = e.body;
+    st.project = state.current;
+    st.path = state.file.path;
+    st.session++;
+
+    paintSwatches(colorOf(e), kindOf(e));
+    ui.colors.hidden = false;
+    ui.text.hidden = false;
+    ui.text.value = e.body;
+    ui.text.placeholder = 'escrever uma nota…';
+    ui.view.hidden = true;
     resetConfirm();
     ui.del.hidden = false;
     ui.del.textContent = 'apagar';
     ui.del.classList.remove('ann-confirm');
     ui.edit.hidden = true;
-    ui.save.hidden = true;
+    ui.save.hidden = false;
+    ui.save.disabled = false;
     ui.cancel.textContent = 'fechar';
-    const m = marksOf(id)[0];
-    placePopover(m ? m.getBoundingClientRect() : FALLBACK_RECT);
+    mic.committed = e.body;
+    mic.live = '';
+    mic.state = 'off';
+    const D = window.NotasDictation;
+    ui.mic.hidden = !(D && D.available());
+    micButton('● ditar');
+    micStatus(e.date);
+
+    placePopover(rect, opts.over);
+    if (opts.focus) {
+      ui.text.focus();
+      ui.text.setSelectionRange(ui.text.value.length, ui.text.value.length);
+      flash(marksOf(id));
+    }
   }
 
   /* ---------- write ---------- */
@@ -940,27 +1010,30 @@
   // Every write ends the same way. Pre-empting the 2 s poll with the returned
   // mtime is what stops a save from also announcing "arquivo recarregado";
   // max() because a dep-aware mtime must never go down.
+  // Answers the server's reply, which for a new entry carries its id.
   async function commit(project, relPath, request, okMsg, opts = {}) {
-    const { mtime } = await request;
-    if (stillOn(project, relPath)) state.file.mtime = Math.max(state.file.mtime, mtime);
+    const out = await request;
+    if (stillOn(project, relPath)) state.file.mtime = Math.max(state.file.mtime, out.mtime);
     if (!opts.keepPopover) closePopover();
     await reload(project, relPath);
     // Say where, when "where" is no longer what the reader is looking at.
     toast(stillOn(project, relPath) ? okMsg : `${okMsg} em ${relPath.split('/').pop()}`);
+    return out;
   }
 
   async function save() {
-    if (st.mode !== 'editor' || st.saving) return;
+    if ((st.mode !== 'editor' && st.mode !== 'mark') || st.saving) return;
     st.saving = true;
     ui.save.disabled = true;
     const session = st.session;
     const project = st.project;
     const relPath = st.path;
     const kind = st.type;
+    const color = st.color;
     const quote = st.quote;
     const ctx = st.ctx;
     const editId = st.editId;
-    const original = st.original;
+    const original = st.original.trim();
     try {
       await micStopForSave();
       // Esc (or anything else that closed the editor) during the mic's final
@@ -968,18 +1041,23 @@
       if (session !== st.session) return;
       const comment = ui.text.value.trim();
       if (editId) {
-        // Emptied is not deleted: that is `apagar`, which asks first. The
-        // editor stays open so nothing typed is lost to a slip.
-        if (!comment) {
-          toast('comentário vazio — para remover, use apagar');
+        // A claude entry is nothing but its instruction, so emptied is not
+        // deleted: that is `apagar`, which asks first. The editor stays open
+        // so nothing typed is lost to a slip. A mark just loses its comment.
+        if (!comment && kind === 'claude') {
+          toast('instrução vazia — para remover, use apagar');
           return;
         }
-        if (comment === original.trim()) {
+        if (comment === original) {
           closePopover();
           return;
         }
         const req = apiPost('/api/annotate/edit', { project, path: relPath, id: editId, comment });
-        await commit(project, relPath, req, kind === 'claude' ? 'instrução alterada' : 'nota alterada');
+        const what =
+          kind === 'claude' ? 'instrução alterada'
+            : !comment ? 'nota removida'
+              : original ? 'nota alterada' : 'nota salva';
+        await commit(project, relPath, req, what);
         return;
       }
       // Nothing said, nothing typed — write nothing, say nothing.
@@ -987,7 +1065,9 @@
         closePopover();
         return;
       }
-      const body = { project, path: relPath, type: kind, quote, comment };
+      // A note is a mark with something written about it.
+      const body = { project, path: relPath, type: kind === 'note' ? 'hl' : kind, quote, comment };
+      if (kind === 'note') body.color = color || Ann.NOTE_COLOR;
       if (ctx) {
         body.before = ctx.before;
         body.after = ctx.after;
@@ -1016,8 +1096,9 @@
     return e && Ann.normalize(e.quote) === Ann.normalize(sel.text) ? e : null;
   }
 
-  // No popover, no editor: there is nothing to type, so the key press *is* the
-  // whole interaction and the write goes out immediately.
+  // There is nothing to type first, so the key press writes the mark at once.
+  // Its popover opens afterwards, box unfocused: ignore it and it goes at the
+  // next click; tap the box and it becomes the mark's comment.
   async function saveHighlight(sel, color) {
     const md = mdRoot();
     if (!md || !state.file || st.saving) return;
@@ -1040,29 +1121,35 @@
     }
     window.getSelection().removeAllRanges();
     st.saving = true;
+    let made = null;
     try {
-      await commit(project, relPath, apiPost('/api/annotate', body), 'trecho marcado');
+      made = await commit(project, relPath, apiPost('/api/annotate', body), 'trecho marcado');
     } catch (err) {
       toast(err && err.message ? err.message : 'erro ao marcar');
     } finally {
       st.saving = false;
     }
+    // stillOn as well as entryOf: the reader may have left mid-request, and a
+    // matching id in whatever file is open now is a coincidence, not this one.
+    if (made && made.id && stillOn(project, relPath) && entryOf(made.id)) openMark(made.id);
   }
 
-  // The popover stays put and re-reads the entry afterwards, so the swatch row
-  // shows the new colour and the next number key still lands on this highlight.
+  // The popover stays put and only its swatches and label are repainted, so a
+  // comment half-typed in the box — or being dictated — survives the recolour,
+  // and the next number key still lands on this mark.
   async function recolor(id, color) {
     const project = state.current;
     const relPath = state.file && state.file.path;
     if (!relPath || st.saving) return;
-    const open = st.mode === 'hl' && st.viewId === id;
+    const e = entryOf(id);
+    if (e && colorOf(e) === color) return;
+    const open = st.mode === 'mark' && st.viewId === id;
     st.saving = true;
     try {
       const req = apiPost('/api/annotate/color', { project, path: relPath, id, color });
       await commit(project, relPath, req, 'cor alterada', { keepPopover: open });
-      // stillOn as well as entryOf: the reader may have left mid-request, and a
-      // matching id in whatever file is open now is a coincidence, not this one.
-      if (open && stillOn(project, relPath) && entryOf(id)) openHl(id);
+      const now = stillOn(project, relPath) && entryOf(id);
+      if (open && now) paintSwatches(colorOf(now), kindOf(now));
       else if (open) closePopover();
     } catch (err) {
       toast(err && err.message ? err.message : 'erro ao recolorir');
@@ -1107,7 +1194,7 @@
     const relPath = state.file && state.file.path;
     if (!relPath) return;
     const e = entryOf(id);
-    const what = e && e.type === 'hl' ? 'marca apagada' : 'anotação apagada';
+    const what = isMark(e) && !e.body ? 'marca apagada' : 'anotação apagada';
     try {
       const req = apiPost('/api/annotate/delete', { project, path: relPath, id });
       await commit(project, relPath, req, what);
@@ -1135,8 +1222,19 @@
   // just says "act on this selection with this type".
   function act(type, color, sel) {
     disarm();
-    if (type === 'hl') saveHighlight(sel, Ann.normColor(color));
-    else openEditor(type, sel);
+    if (type === 'hl') {
+      saveHighlight(sel, Ann.normColor(color));
+      return;
+    }
+    // A note on a passage that is already marked belongs in that mark's own
+    // comment, not in a second mark nested inside it.
+    const prior = type === 'note' ? existingHl(sel) : null;
+    if (prior) {
+      window.getSelection().removeAllRanges();
+      openMark(prior.id, { focus: true });
+      return;
+    }
+    openEditor(type, sel);
   }
 
   function begin(type, color) {
@@ -1186,7 +1284,9 @@
       closePopover();
       return;
     }
-    if (st.mode === 'hl') {
+    // Outside the box — on a swatch, a button — the number keys recolour. In
+    // the box they are digits like any other.
+    if (st.mode === 'mark' && e.target !== ui.text) {
       const c = colorKey(e);
       if (c) {
         e.preventDefault();
@@ -1194,7 +1294,7 @@
       }
       return;
     }
-    if (st.mode !== 'editor') return;
+    if (st.mode !== 'editor' && st.mode !== 'mark') return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       save();
@@ -1212,10 +1312,10 @@
         closePopover();
         return;
       }
-      // The highlight popover has no field to focus, so its number keys have to
-      // work from wherever the click left the caret. Only those keys are taken —
-      // everything else still reaches app.js, as it does for the view popover.
-      if (st.mode === 'hl') {
+      // The mark popover opens with its box unfocused, so its number keys have
+      // to work from wherever the click left the caret. Only those keys are
+      // taken — everything else still reaches app.js, as for the view popover.
+      if (st.mode === 'mark') {
         const c = colorKey(e);
         if (c) {
           e.preventDefault();
@@ -1399,12 +1499,14 @@
     if (!m) return;
     const id = m.dataset.annId;
     const entry = entryOf(id);
-    // A highlight has no card to jump to at any width — clicking one is the only
-    // way to recolour or remove it, so the popover opens either way. `closest`
-    // gave us the innermost mark, which is the right one when a note and a
-    // highlight cover the same passage.
-    if (entry && entry.type === 'hl') {
-      openHl(id);
+    // A mark's popover is where its colour and comment are changed, so it opens
+    // at every width; with the rail there, the card flashes too. `closest` gave
+    // us the innermost mark, which is the right one when a claude instruction
+    // and a mark cover the same passage.
+    if (isMark(entry)) {
+      openMark(id);
+      const card = railVisible() && rail.querySelector(`.ann-card[data-ann-id="${CSS.escape(id)}"]`);
+      if (card) flash([card]);
       return;
     }
     if (railVisible()) {
@@ -1419,14 +1521,16 @@
     }
   });
 
-  // A view or highlight popover is transient; the editor holds a half-typed
-  // comment and stays. Pointer, not mouse: iOS sends mouse events for a tap
-  // only on what it considers clickable, and the desk around the page is not.
+  // A view or mark popover is transient; the editor holds a half-typed comment
+  // and stays, and so does a mark popover once something is typed in its box.
+  // Pointer, not mouse: iOS sends mouse events for a tap only on what it
+  // considers clickable, and the desk around the page is not.
   document.addEventListener(
     'pointerdown',
     (e) => {
-      if (!pop || pop.hidden || (st.mode !== 'view' && st.mode !== 'hl')) return;
+      if (!pop || pop.hidden || (st.mode !== 'view' && st.mode !== 'mark')) return;
       if (pop.contains(e.target) || e.target.closest('mark.ann')) return;
+      if (editorBusy()) return;
       closePopover();
     },
     true

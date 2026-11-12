@@ -1012,11 +1012,14 @@ body {
 :root[data-theme='dark'] .ann-c-pink   { --mk-tint: rgba(232, 112, 170, 0.30); --mk-line: #dd8bb4; }
 
 /* A highlighter, not an underline — the tint alone carries it. Dropping the
-   hairline is also what keeps a note nested inside a highlight legible. */
+   hairline is also what keeps a claude instruction nested inside one legible. */
 .md mark.ann-hl {
   background: var(--mk-tint);
   border-bottom: 0;
 }
+/* …until something is written about the passage: then the line says there is
+   a comment to open, in the mark's own colour. */
+.md mark.ann-hl.ann-has-note { border-bottom: 1.5px solid var(--mk-line); }
 
 /* the passage being commented on, before it is saved */
 .md mark.ann-pending {
@@ -1202,9 +1205,9 @@ body {
   padding: 2px 1px;
 }
 
-/* The whole body of a highlight popover: pick a colour, or use the delete
-   button below. Swatch order is number-key order. */
+/* A mark's colour, above its comment box. Swatch order is number-key order. */
 .ann-pop-colors { display: flex; gap: 8px; padding: 2px 1px; }
+.ann-pop-colors:not([hidden]) + .ann-pop-text { margin-top: 9px; }
 .ann-swatch {
   width: 22px;
   height: 22px;

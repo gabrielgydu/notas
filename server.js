@@ -516,22 +516,23 @@ async function handleAnnotate(req, res) {
   if (t.error) return sendJSON(res, t.status, { error: t.error });
 
   const TYPES = ['note', 'claude', 'hl'];
-  const type = TYPES.includes(body.type) ? body.type : null;
+  if (!TYPES.includes(body.type)) return sendJSON(res, 400, { error: 'bad type' });
+  // Nothing writes `ann:note` any more: a note is a mark with a comment. A
+  // client that still asks for one (a PWA running an older cached shell) gets
+  // the mark it would now make — green, the colour notes always had.
+  const legacyNote = body.type === 'note';
+  const type = legacyNote ? 'hl' : body.type;
   const quote = textField(body.quote, 10000);
   const comment = textField(body.comment, 10000);
-  if (!type) return sendJSON(res, 400, { error: 'bad type' });
   if (quote === null) return sendJSON(res, 400, { error: 'trecho vazio' });
   if (quote === false) return sendJSON(res, 400, { error: 'trecho longo demais (máx. 10k)' });
-  // A highlight is the passage and nothing else; anything sent as a comment
-  // alongside one is dropped rather than half-honoured.
-  if (type !== 'hl') {
-    if (comment === null) return sendJSON(res, 400, { error: 'comentário vazio' });
-    if (comment === false) return sendJSON(res, 400, { error: 'comentário longo demais (máx. 10k)' });
-  }
+  if (comment === false) return sendJSON(res, 400, { error: 'comentário longo demais (máx. 10k)' });
+  // A mark may come with or without a comment; anything else is its comment.
+  if (comment === null && (type !== 'hl' || legacyNote)) return sendJSON(res, 400, { error: 'comentário vazio' });
 
   const before = ann.ctxAttr(body.before || '', true);
   const after = ann.ctxAttr(body.after || '', false);
-  const color = ann.normColor(body.color);
+  const color = legacyNote && !body.color ? ann.NOTE_COLOR : ann.normColor(body.color);
 
   return withFileLock(t.abs, async () => {
     // Raw disk bytes, never the mdt-expanded text: the section lives at EOF,
@@ -624,18 +625,19 @@ async function handleAnnotateEdit(req, res) {
   if (t.error) return sendJSON(res, t.status, { error: t.error });
   const id = typeof body.id === 'string' ? body.id : '';
   if (!/^[a-z0-9]{3,8}$/.test(id)) return sendJSON(res, 400, { error: 'bad id' });
-  // Emptying a comment is not how one is deleted — that is /delete, which the
-  // client puts behind a confirm. An entry with no body would be a note that
-  // says nothing, so refuse it.
-  const comment = textField(body.comment, 10000);
-  if (comment === null) return sendJSON(res, 400, { error: 'comentário vazio' });
-  if (comment === false) return sendJSON(res, 400, { error: 'comentário longo demais (máx. 10k)' });
+  // An empty comment takes a mark back to a plain highlight. For a claude
+  // entry it would be an instruction that says nothing — removing one is
+  // /delete, which the client puts behind a confirm — so setComment refuses it.
+  if (typeof body.comment !== 'string') return sendJSON(res, 400, { error: 'comentário ausente' });
+  const field = textField(body.comment, 10000);
+  if (field === false) return sendJSON(res, 400, { error: 'comentário longo demais (máx. 10k)' });
+  const comment = field || '';
 
   return withFileLock(t.abs, async () => {
     const raw = await fsp.readFile(t.abs, 'utf8');
     const out = ann.setComment(raw, id, comment);
     if (out.error === 'not found') return sendJSON(res, 404, { error: 'unknown annotation' });
-    if (out.error === 'not a comment') return sendJSON(res, 400, { error: 'marcações não têm comentário' });
+    if (out.error === 'empty') return sendJSON(res, 400, { error: 'instrução vazia — para remover, use apagar' });
     if (out.error === 'unterminated') return sendJSON(res, 409, { error: 'entrada sem terminador — corrija no editor' });
 
     await writeAtomic(t.abs, out.text, t.st.mode);

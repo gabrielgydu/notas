@@ -30,12 +30,22 @@
 
   const MAX_CTX = 32;
 
-  // A highlight carries no comment, so its only variable is which of these it is.
-  // Yellow is the default and is never written out: an unadorned `ann:hl` marker
-  // is a yellow highlight, and that is what most of them are.
+  // A mark is a passage in one of these colours, with a comment under the quote
+  // when something was written about it. Yellow is the default and is never
+  // written out: an unadorned `ann:hl` marker is a yellow highlight, and that is
+  // what most of them are.
   const COLORS = ['yellow', 'green', 'blue', 'pink'];
   const DEFAULT_COLOR = 'yellow';
   const normColor = (c) => (COLORS.indexOf(String(c)) >= 0 ? String(c) : DEFAULT_COLOR);
+
+  // `ann:note` is how a comment was stored before marks could carry one. It
+  // still reads as a mark — a green one, the colour notes always had — and the
+  // first write that touches it (a recolour, a reworded comment) rewrites its
+  // marker as `ann:hl`. Nothing writes a new `ann:note`.
+  const NOTE_COLOR = 'green';
+  const isMark = (e) => Boolean(e) && (e.type === 'hl' || e.type === 'note');
+  const entryColor = (e) =>
+    e && e.type === 'note' && !(e.attrs && e.attrs.color) ? NOTE_COLOR : normColor(e && e.attrs && e.attrs.color);
 
   /* ---------- text helpers ---------- */
 
@@ -229,10 +239,11 @@
       .split('\n')
       .map((l) => (l.trim() === '' ? '>' : '> ' + l))
       .join('\n');
-    // A highlight is the quote and nothing else — no blank line, no body. The
-    // parser reads the empty remainder back as an empty body, which is exactly
-    // what it is.
-    if (e.type === 'hl') return `${marker}\n${quote}\n<!-- /ann -->\n`;
+    // A mark with nothing written about it is the quote and nothing else — no
+    // blank line, no body. The parser reads the empty remainder back as an
+    // empty body, which is exactly what it is.
+    const hasComment = e.comment != null && String(e.comment).trim() !== '';
+    if (e.type === 'hl' && !hasComment) return `${marker}\n${quote}\n<!-- /ann -->\n`;
     return `${marker}\n${quote}\n\n${bodyLines(e.comment).join('\n')}\n<!-- /ann -->\n`;
   }
 
@@ -297,24 +308,33 @@
     const parsed = parse(src);
     const e = parsed.entries.find((x) => x.id === id);
     if (!e) return { error: 'not found' };
-    if (e.type !== 'hl') return { error: 'not a highlight' };
+    if (!isMark(e)) return { error: 'not a highlight' };
     const lines = parsed.lines.slice();
-    lines[e.startLine] = markerLine({
-      type: e.type,
+    lines[e.startLine] = markMarker(e, color);
+    return { text: lines.join('\n'), entry: e };
+  }
+
+  // The marker a mark is written back with — `ann:hl` whatever it was read as.
+  function markMarker(e, color) {
+    return markerLine({
+      type: 'hl',
       id: e.id,
       date: e.date,
       color,
       before: e.attrs.before,
       after: e.attrs.after,
     });
-    return { text: lines.join('\n'), entry: e };
   }
 
   /* ---------- reword ---------- */
 
-  // Replaces the comment and leaves the marker and the quote byte for byte. Like
+  // Replaces the comment and leaves the quote byte for byte, and the marker too
+  // unless it is a legacy `ann:note` (rewritten as the `ann:hl` it now is). Like
   // setColor, an edit is not a delete plus an append: the entry keeps its id,
   // its date and its place in the section.
+  //
+  // An empty comment takes a mark back to a plain highlight. A claude entry is
+  // nothing but its instruction, so emptying one is refused — that is a delete.
   //
   // Unlike setColor it needs the terminator — the body runs up to it, and an
   // entry without one has no end that can be trusted.
@@ -323,10 +343,13 @@
     const parsed = parse(src);
     const e = parsed.entries.find((x) => x.id === id);
     if (!e) return { error: 'not found' };
-    if (e.type === 'hl') return { error: 'not a comment' };
     if (e.unterminated) return { error: 'unterminated' };
+    const empty = comment == null || String(comment).trim() === '';
+    if (empty && !isMark(e)) return { error: 'empty' };
     const lines = parsed.lines.slice();
-    lines.splice(e.quoteEnd, e.endLine - e.quoteEnd, '', ...bodyLines(comment));
+    if (empty) lines.splice(e.quoteEnd, e.endLine - e.quoteEnd);
+    else lines.splice(e.quoteEnd, e.endLine - e.quoteEnd, '', ...bodyLines(comment));
+    if (e.type === 'note') lines[e.startLine] = markMarker(e, entryColor(e));
     return { text: lines.join('\n'), entry: e };
   }
 
@@ -348,7 +371,10 @@
     MAX_CTX,
     COLORS,
     DEFAULT_COLOR,
+    NOTE_COLOR,
     normColor,
+    isMark,
+    entryColor,
     normalize,
     normSpace,
     escAttr,
