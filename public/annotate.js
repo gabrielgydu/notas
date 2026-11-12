@@ -1,10 +1,10 @@
 /* Notas — annotations UI.
 
-   `n` = nota (stays in the file), `c` = claude (an instruction a later Claude
-   session applies to the quoted passage and then removes), `h` = marca (a
-   highlighter, no comment at all; `1`–`4` pick the colour directly). Any of
-   them with text selected acts on it; without a selection the key arms the
-   page and the next selection is what it acts on.
+   `n` or `b` = nota (stays in the file), `c` = claude (an instruction a later
+   Claude session applies to the quoted passage and then removes), `h` or `g` =
+   marca (a highlighter, no comment at all; `1`–`4` pick the colour directly).
+   Any of them with text selected acts on it; without a selection the key arms
+   the page and the next selection is what it acts on.
 
    The two comment kinds open a popover to type in. A highlight has nothing to
    type, so it writes immediately — its popover only appears when you click one
@@ -1177,6 +1177,8 @@
     if (e.target === ui.text && mic.state !== 'off' && isTyping(e)) micPause();
   }
 
+  const KEY_TYPE = { n: 'note', b: 'note', c: 'claude', h: 'hl', g: 'hl' };
+
   function onKey(e) {
     if (pop && !pop.hidden) {
       if (pop.contains(e.target)) return popKey(e);
@@ -1195,7 +1197,7 @@
           recolor(st.viewId, c);
         }
       }
-      return; // a popover is open — n/c/h stay inert until it is dealt with
+      return; // a popover is open — the annotation keys stay inert until it is dealt with
     }
     if (e.key === 'Escape' && st.mode === 'armed') {
       e.preventDefault();
@@ -1205,7 +1207,7 @@
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key.length === 1 ? e.key.toLowerCase() : '';
     const digit = colorKey(e);
-    const type = k === 'n' ? 'note' : k === 'c' ? 'claude' : k === 'h' || digit ? 'hl' : null;
+    const type = digit ? 'hl' : KEY_TYPE[k];
     if (!type) return;
     const a = document.activeElement;
     if (a && (a.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName))) return;

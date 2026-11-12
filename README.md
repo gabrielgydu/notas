@@ -82,8 +82,8 @@ On phones (≤ 900 px) the sidebar becomes a drawer behind the ☰ button.
 - Search: `/` focuses the box, Enter searches the current project (server-side grep).
 - Dark/light: follows the OS, toggle bottom-left, persisted.
 - "copiar caminho" button copies the absolute file path.
-- Anotações: select a passage, `n` for a note or `c` for a Claude instruction —
-  typed or dictated, stored in the `.md` itself. `h` (or `1`–`4`) highlights it
+- Anotações: select a passage, `n` or `b` for a note or `c` for a Claude instruction —
+  typed or dictated, stored in the `.md` itself. `h` or `g` (or `1`–`4`) highlights it
   in one of four colours, no comment. See below.
 
 ## PDFs
@@ -145,14 +145,14 @@ Full syntax, config and hard rules live in mdt's own documentation.
 Select text in the rendered page and press a key — the comment is written into the
 `.md` file itself, not into a sidecar database.
 
-- `n` — **nota**: a note to self. It stays in the file.
+- `n` or `b` — **nota**: a note to self. It stays in the file.
 - `c` — **claude**: an instruction for a later Claude session.
-- `h` — **marca**: a highlighter. No comment at all.
+- `h` or `g` — **marca**: a highlighter. No comment at all.
 
 Pressing the key without a selection arms the page (crosshair cursor); the next
 selection is what it acts on. `Esc` cancels at any point.
 
-`n` and `c` open a comment popover: `Enter` saves, and an empty comment writes
+`n`, `b` and `c` open a comment popover: `Enter` saves, and an empty comment writes
 nothing at all. Comments can be typed or dictated (see below).
 
 To reword a comment already written, click `✎` on its card in the rail (it shows on hover, next to `×`), or `editar` in the popover a mark opens when the window is too narrow for the rail.
@@ -167,9 +167,9 @@ Only the comment changes. The quoted passage, the id and the date stay as they w
 
 ### Marcas (highlighting)
 
-`h` writes immediately — there is nothing to type, so the key press is the whole interaction.
+`h` and `g` write immediately — there is nothing to type, so the key press is the whole interaction.
 
-`1`–`4` pick the colour directly: **yellow** (what `h` uses), **green**, **blue**, **pink**.
+`1`–`4` pick the colour directly: **yellow** (what `h` and `g` use), **green**, **blue**, **pink**.
 
 Click a highlight to recolour or remove it: the popover is four swatches and an `apagar` button, and `1`–`4` work there too.
 
