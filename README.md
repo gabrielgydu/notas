@@ -165,6 +165,20 @@ Emptying the field does not delete the annotation — it is refused, and `apagar
 
 Only the comment changes. The quoted passage, the id and the date stay as they were.
 
+### On a phone
+
+There are no keys to press, so a selection made with a finger brings up a bar along the bottom of the screen: `nota`, `claude`, and the four highlight colours.
+
+`nota` and `claude` open the same comment popover as `n` and `c`; a swatch highlights in that colour, like `1`–`4`.
+
+The bar sits at the bottom rather than beside the passage because iOS draws its own copy/look-up menu next to the selection, and a page can neither move nor extend that one.
+
+It never appears for a mouse selection: on a desktop the keys are the interface.
+
+When the keyboard comes up, the comment popover moves into the part of the screen the keyboard leaves visible.
+
+Tapping a mark works like clicking one: a highlight opens its colour popover, a `nota` or `claude` mark opens its comment with `editar` and `apagar`.
+
 ### Marcas (highlighting)
 
 `h` and `g` write immediately — there is nothing to type, so the key press is the whole interaction.

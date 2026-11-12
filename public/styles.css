@@ -1245,7 +1245,72 @@ body {
   /* thumbs, not a mouse pointer */
   .ann-pop-actions button { padding: 8px 14px; font-size: 12px; }
   .ann-pop-text { font-size: 16px; } /* stops iOS zooming the viewport on focus */
+  .ann-pop-colors { gap: 14px; }
+  .ann-swatch { width: 32px; height: 32px; }
 }
+
+/* ---------- the selection bar (touch only) ---------- */
+
+.ann-bar {
+  position: fixed;
+  left: 50%;
+  bottom: calc(14px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 35; /* the popover's layer: over the drawer (30), under the toast (40) */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  background: var(--paper);
+  border: 1px solid var(--rule-strong);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.22);
+  /* a tap on the bar must not start a selection of its own */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.ann-bar[hidden] { display: none; }
+
+.ann-bar button {
+  min-width: 40px;
+  height: 44px;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.ann-bar button:active { background: var(--accent-soft); }
+
+.ann-bar .ann-bar-kind {
+  padding: 0 13px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+.ann-bar-kind.ann-kind-note { color: var(--ann-note-line); }
+.ann-bar-kind.ann-kind-claude { color: var(--ann-claude-line); }
+
+.ann-bar-sep { width: 1px; height: 24px; margin: 0 4px; background: var(--rule-strong); }
+
+/* The button is the 40 × 44 touch target; the dot inside is the colour. */
+.ann-bar-swatch::before {
+  content: '';
+  display: block;
+  width: 26px;
+  height: 26px;
+  margin: auto;
+  border-radius: 50%;
+  background: var(--mk-tint);
+  border: 1px solid var(--mk-line);
+}
+
+/* The toast would land on top of the bar. */
+:root.ann-bar-on .toast { bottom: calc(76px + env(safe-area-inset-bottom)); }
 
 .toast {
   position: fixed;

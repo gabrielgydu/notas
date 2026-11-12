@@ -14,6 +14,9 @@
    or `editar` in the popover a mark opens when there is no rail. Only the
    comment changes — the passage, id and date stay as they were.
 
+   A phone has no keys to press: a selection made with a finger brings up a bar
+   along the bottom of the screen with the same actions (see "touch" below).
+
    Quotes are re-found on every render by matching normalized text against the
    rendered page — the file stores the passage, not a position, so it survives
    edits above it. When it cannot be found (or found more than once with no way
@@ -501,6 +504,29 @@
     pop.style.left = `${Math.round(left)}px`;
     pop.style.top = `${Math.round(top)}px`;
     pop.style.visibility = '';
+    keepInView();
+  }
+
+  // iOS lays its keyboard over the page instead of shrinking it. `fixed` is
+  // measured against the layout viewport, which keeps its full height, so an
+  // editor placed under a passage low on the screen ends up behind the keys.
+  // The visual viewport is the part actually on screen; the popover moves into
+  // it, and stays put when it already fits.
+  function keepInView() {
+    const vv = window.visualViewport;
+    if (!vv || !pop || pop.hidden) return;
+    const margin = 10;
+    const top = parseFloat(pop.style.top) || 0;
+    const lo = vv.offsetTop + margin;
+    const hi = vv.offsetTop + vv.height - margin;
+    const h = pop.offsetHeight;
+    if (top >= lo && top + h <= hi) return;
+    pop.style.top = `${Math.round(Math.max(lo, Math.min(top, hi - h)))}px`;
+  }
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', keepInView);
+    window.visualViewport.addEventListener('scroll', keepInView);
   }
 
   function closePopover() {
@@ -1222,6 +1248,130 @@
 
   document.addEventListener('keydown', onKey, true);
 
+  /* ---------- touch ----------
+     While a selection made with a finger sits in the page, a bar along the
+     bottom of the screen offers what the keys do: nota, claude, and one swatch
+     per highlight colour. Bottom, not beside the passage: iOS draws its own
+     copy/look-up callout right next to the selection, and a page can neither
+     move nor extend that one. A mouse never sees the bar — the keys are there. */
+
+  let bar = null;
+  // What the bar acts on, read while the selection was still there. A tap
+  // outside the selection may collapse it before the button's click arrives.
+  let barSel = null;
+  // Set from the finger landing on the bar until its click: a selection that
+  // collapses in between must not pull the button out from under the finger.
+  let barPressed = false;
+  let barFrame = 0;
+  let pointer = 'mouse';
+
+  function ensureBar() {
+    if (bar) return;
+    bar = document.createElement('div');
+    bar.className = 'ann-bar';
+    bar.hidden = true;
+    bar.setAttribute('role', 'toolbar');
+    bar.setAttribute('aria-label', 'anotar seleção');
+    const add = (cls, text, label, type, color) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls;
+      b.textContent = text;
+      b.setAttribute('aria-label', label);
+      b.dataset.type = type;
+      if (color) b.dataset.color = color;
+      bar.appendChild(b);
+    };
+    add('ann-bar-kind ann-kind-note', KIND.note, 'nota', 'note');
+    add('ann-bar-kind ann-kind-claude', KIND.claude, 'instrução para o claude', 'claude');
+    const sep = document.createElement('span');
+    sep.className = 'ann-bar-sep';
+    bar.appendChild(sep);
+    for (const c of Ann.COLORS) add(`ann-bar-swatch ann-c-${c}`, '', `marca ${c}`, 'hl', c);
+
+    bar.addEventListener('pointerdown', () => {
+      barPressed = true;
+    });
+    bar.addEventListener('pointercancel', () => {
+      barPressed = false;
+      scheduleBar();
+    });
+    // A press that ends without a click (the finger slid off the button) would
+    // otherwise leave the bar pinned over a selection that is long gone.
+    bar.addEventListener('pointerup', () => {
+      setTimeout(() => {
+        if (!barPressed) return;
+        barPressed = false;
+        scheduleBar();
+      }, 500);
+    });
+    bar.addEventListener('click', onBarClick);
+    document.body.appendChild(bar);
+  }
+
+  function onBarClick(e) {
+    barPressed = false;
+    const b = e.target.closest('button');
+    if (!b) {
+      scheduleBar();
+      return;
+    }
+    const sel = barSel;
+    hideBar();
+    if (!sel) return;
+    if (sel.refuse) {
+      toast(sel.refuse);
+      return;
+    }
+    // A save or the 2 s autoreload re-renders the page, and the range then
+    // points into nodes that are gone.
+    if (!sel.range.startContainer.isConnected) {
+      toast('a página recarregou — selecione de novo');
+      return;
+    }
+    sel.rect = sel.range.getBoundingClientRect(); // the page may have scrolled since
+    act(b.dataset.type, b.dataset.color || Ann.DEFAULT_COLOR, sel);
+  }
+
+  // Same gates as the keys, minus the toasts: a bar that appears only to say
+  // "not here" would get in the way of selecting text to copy it.
+  const barWanted = () =>
+    pointer !== 'mouse' && Boolean(state.file) && state.current !== '~' && (!pop || pop.hidden);
+
+  function syncBar() {
+    barFrame = 0;
+    const sel = barWanted() ? readSelection() : null;
+    if (sel) {
+      ensureBar();
+      barSel = sel;
+      bar.hidden = false;
+      document.documentElement.classList.add('ann-bar-on');
+      return;
+    }
+    if (!barPressed) hideBar();
+  }
+
+  // selectionchange fires on every step of a handle being dragged.
+  function scheduleBar() {
+    if (!barFrame) barFrame = requestAnimationFrame(syncBar);
+  }
+
+  function hideBar() {
+    barSel = null;
+    if (!bar || bar.hidden) return;
+    bar.hidden = true;
+    document.documentElement.classList.remove('ann-bar-on');
+  }
+
+  document.addEventListener('selectionchange', scheduleBar);
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      pointer = e.pointerType || 'mouse';
+    },
+    true
+  );
+
   /* ---------- clicks ---------- */
 
   if (rail) {
@@ -1270,9 +1420,10 @@
   });
 
   // A view or highlight popover is transient; the editor holds a half-typed
-  // comment and stays.
+  // comment and stays. Pointer, not mouse: iOS sends mouse events for a tap
+  // only on what it considers clickable, and the desk around the page is not.
   document.addEventListener(
-    'mousedown',
+    'pointerdown',
     (e) => {
       if (!pop || pop.hidden || (st.mode !== 'view' && st.mode !== 'hl')) return;
       if (pop.contains(e.target) || e.target.closest('mark.ann')) return;
@@ -1309,6 +1460,7 @@
 
   function clear() {
     closePopover();
+    hideBar();
     disarm();
     st.entries = [];
     st.cards = [];
