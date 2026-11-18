@@ -537,7 +537,7 @@ body {
   margin: 0 0 16px;
   padding: 0 1em;
   border-left: 0.25em solid var(--rule-strong);
-  color: var(--muted);
+  color: var(--ink);
 }
 .md blockquote p { margin-bottom: 8px; }
 
